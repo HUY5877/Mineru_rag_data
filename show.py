@@ -1,0 +1,2 @@
+s = "Table 1: The evolution of kilosort. New features added after Kilosort 1 are bolded in the version they were first introduced. 1 described in Pachitariu et al, 2016 bioRxiv, 2 described in Steinmetz et al, 2021 Science, ∗ described in this paper. "
+print(s)

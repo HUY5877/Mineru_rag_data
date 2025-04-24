@@ -1,0 +1,1546 @@
+[
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Solving the spike sorting problem with Kilosort",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Marius Pachitariu1†, Shashwat Sridhar2 , Carsen Stringer1\n1HHMI Janelia Research Campus,\n2Department of Ophthalmology, University Medical Center Go¨ttingen. Go¨ttingen\n† correspondence to pachitarium@hhmi.org",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Spike sorting is the computational process of extracting the firing times of single neurons from recordings of local electrical fields. This is an important but hard problem in neuroscience, complicated by the nonstationarity of the recordings and the dense overlap in electrical fields between nearby neurons. To solve the spike sorting problem, we have continuously developed over the past eight years a framework known as Kilosort. This paper describes the various algorithmic steps introduced in different versions of Kilosort. We also report the development of Kilosort4, a new version with substantially improved performance due to new clustering algorithms inspired by graph-based approaches. To test the performance of Kilosort, we developed a realistic simulation framework which uses densely sampled electrical fields from real experiments to generate non-stationary spike waveforms and realistic noise. We find that nearly all versions of Kilosort outperform other algorithms on a variety of simulated conditions, and Kilosort4 performs best in all cases, correctly identifying even neurons with low amplitudes and small spatial extents in high drift conditions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Introduction",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "2 Classical spike sorting frameworks require a sequence\n3 of operations, which can be categorized into prepro\n4 cessing, spike detection, clustering and postprocess\n5 ing. Modern approaches have improved on these\n6 steps by introducing new algorithms. Some frame\n7 works [1–3] took advantage of new clustering algo\n8 rithms such as density-based approaches [4] or ag\n9 glomerative approaches using bimodality criteria [5].\n10 In contrast, the original Kilosort [6] used a simple clus\n11 tering approach (scaled K-means), but combined two\n12 steps of the pipeline into one (spike detection $^+$ cluster\n13 ing $\\mathbf{\\sigma}=\\mathbf{\\sigma}$ template learning) and added an extra matching\n14 pursuit step for detecting overlapping spikes, some\n15 times referred to as solving the “collision problem” [7].",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "An important consideration for these early modern algorithms was the requirement for additional human curation, as the clustering results were imperfect in many applications. Thus, algorithms like Kilosort biased the clustering process towards “over-splitting”, producing more clusters than the number of real units in the data, so that human curation would consist primarily of merges, which are substantially easier to perform than splits. To facilitate human curation of the automated results, a modern graphical user interface called Phy was developed, which is now used for visualization by several of the most popular frameworks including all versions of Kilosort [8].",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Why was human curation still necessary for these early modern methods? One of the main reasons was the non-stationary nature of data from real experiments. The electrical field of a unit sampled by a probe, called a spike waveform, should be fixed and",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "34 reproducible across long time periods. Yet in many\n35 experiments, the shape of the waveform appeared to\n36 change over the course of hours, and sometimes much\n37 faster. The main reason for these changes was identi\n38 fied as vertical probe movement or “drift”, using high\n39 density electrodes [9]. Drift is primarily caused by fac\n40 tors such as tissue relaxation after probe insertion and\n41 animal movements during behavior. Correcting for this\n42 drift resulted in substantial improvements in spike sort\n43 ing performance. Kilosort2 used a “drift tracking” ap\n44 proach for this, while Kilosort2.5 developed a stan\n45 dalone drift correction method that directly modified\n46 the voltage data to shift certain channels up or down\n47 by appropriate distances (see Methods for drift track\n48 ing, and Methods in [9] for drift correction). The drift\n49 correction step has been inherited by all Kilosort ver\n50 sions since 2.5.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The main goal of this paper is to describe the development of Kilosort4 and demonstrate its performance. Some of the algorithmic steps in Kilosort4 are inherited from previous versions (i.e. drift correction), while others build on top of previous versions (i.e. template deconvolution), while others are completely new (i.e. the graph-based clustering approach). Except for drift correction, which was previously described in detail [9], the other algorithmic steps are not described in the literature, and we add detailed descriptions in the Methods (see Table 1 for an overview). We also developed a new simulation-based framework for benchmarking spike sorting algorithms, which uses several realistic drift patterns and dense electrical fields inferred from real experiments. We show using the benchmarks that Kilosort4 performs very well and outperforms all other algorithms across a range of conditions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who has granted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Table 1: The evolution of kilosort. New features added after Kilosort 1 are bolded in the version they were first introduced. 1 described in Pachitariu et al, 2016 bioRxiv, 2 described in Steinmetz et al, 2021 Science, ∗ described in this paper.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "68 Results",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "To be able to process the large amounts of data from modern electrophysiology, all versions of Kilosort are implemented on the GPU. Kilosort4 is the first version fully implemented in python and using the pytorch package for all its functionality, thus making the old CUDA functions obsolete [10, 11]. Pytorch allows the user to switch to a CPU backend which may be sufficiently fast for testing on small amounts of data but is not recommended for large-scale data. All versions of Kilosort take as input a binary data file, and output a set of “.npy” files that can be used for visualization in Phy [8]. To set up a Kilosort4 run, we built a pyqtgraph GUI which replicates the functionality of the Matlab GUI, and can assist users in debugging due to several diagnostic plots and summary statistics that are displayed [12] (Figure S1).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The preprocessing step in all versions of Kilosort includes temporal filtering and channel whitening (see Methods). These linear operations reduce the strong spatiotemporal correlations of the electrical background in the brain, which is mainly formed by the electrical discharge of units that are too far from the probe to be identified as single units. This step is accelerated in Kilosort4 through the use of explicit convolutions in place of a Butterworth filter. Drift correction is an additional preprocessing step that was introduced in Kilosort2.5 and maintained in all subsequent versions (see Methods of [9]). Unlike previous versions, Kilosort4 no longer needs to generate an intermediate file of processed data, as all preprocessing operations are fast enough to be performed on-demand.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Template deconvolution",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "We refer to the spike detection and feature extraction steps jointly as “template deconvolution”. This module requires a set of templates which correspond to the average spatiotemporal waveforms of neurons in the recording. The templates are used in the matching pursuit step for detecting overlapping spikes [6]. A template deconvolution step has been used in all versions of Kilosort, but the details of the template learning have changed (see Methods). In Kilosort 3 and 4, the template deconvolution serves an extra role as a feature extraction method with background correction.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The template deconvolution pipeline has the same format for both Kilosort 3 and 4 (Figure 1a). A set of initial spike waveforms are extracted from preprocessed data using a set of universal templates (Figure 1b,c). The features of these spikes are then clustered, using either the recursive pursuit algorithm from Kilosort3 (see Methods), or the graph-based algorithm from Kilosort4 (described in Figure 2). The centroids of the clusters are the “learned templates”, which are then aligned temporally (Figure 1d). The templates are compared to each other by cross-correlation and similar templates are merged together to remove duplicates. The learned templates are then used in the matching pursuit step, which iteratively finds the best matching templates to the preprocessed data and subtracts off their contribution. The subtraction is a critical part of all matching pursuit algorithms and allows the algorithm to detect spikes that were overlapped by the subtracted ones. The final reconstruction of the data with the templates is shown in Figure 1e. The residual is the difference between data and reconstruction, and",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who nted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/1f46a42341b8d35c6da18ca0d891f0c0203e58fd2ae1e6dfd5c6c0ad038d24a2.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Figure 1: Spike detection and feature extraction. a, Schematic of the pipeline for detecting spikes and extracting spikes features. b, Short segment of preprocessed data over 70 channels and 1,000 timepoints (data from [13]). c, Example universal templates centered at a single position on the probe. Templates are repeated at 1536 positions for a Neuropixels probe. d, Example learned templates centered at different positions on the probe. e, Reconstruction of the data in b based on the inferred templates and spike times. f, Residual after subtracting the reconstruction from the data. g-i, t-SNE visualization of spike features from a $40\\upmu\\mathrm{m}$ segment of the probe. Spike features were extracted using either universal templates (g) or learned templates without (h) or with (i) background subtraction. j, Spatial distribution of a subset of the final extracted spikes colored by their template norm.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "can be informative if the algorithm fails to find some units (Figure 1f).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "135 This template learning step from Kilosort $_{3/4}$ is dif\n136 ferent from the one in Kilosort1 (see [6]), and both\n137 are different from the equivalent step in Kilosort 2/2.5\n138 (see Methods). Furthermore, the templates of Kilo\n139 sort1 are in one-to-one correspondence with the final\n140 inferred units which are exported for manual curation.\n141 This correspondence is weaker in Kilosort 2/2.5, be\n142 cause a post-processing step is used to perform splits\n143 and merges on these templates (see Methods). Fi\n144 nally, in Kilosort $3/4$ these templates are completely\n145 discarded after being used to extract spikes. This is\n146 because more powerful clustering algorithms can be\n147 applied to the spike features once they have been ex\n148 tracted with template deconvolution. The “corrected”\n149 or deconvolved features have three additional proper\n150 ties compared to the features detected with universal\n151 templates or more generally detected with any clas\n152 sical threshold crossing method: 1) they contain all,\n153 or a majority of spikes from the clustered units, even",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "the ones that are overlapped by larger, bigger spikes; 2) they group spikes together by templates, which can be used to more precisely assign spikes to their best channels for batched clustering across channels; 3) they can be computed after subtraction of the background produced by all other spikes (Figure 1e).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "These properties have a substantial effect on the features, allowing for better clustering. Figure 1g-i show the t-SNE embeddings of three different sets of features from spikes detected over a 40um stretch of a Neuropixels probe. The features computed with the learned templates with background subtraction (Figure 1i) are embedded as more uniform, Gaussian-like clusters. Without background subtraction, each cluster is surrounded by a patterned envelope of points due to the contribution of overlapping spikes, and these patterns can be easily mistaken for other clusters (Figure 1g,h). The visualization in Figure 1i can be used to get an impression of a small section of the data without performing any clustering at all. To visualize the distribution of spikes over a larger portion of a probe, we plot a subset of spikes at their inferred XY positions (Figure 1j). The spikes are colored according to amplitudes, which tends to be uniform for spikes from the same unit.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/4096ab00af524b1a35f5599f2ed1b2ed11327ffb523a7c0dee3722889ad24a55.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.\nFigure 2: Clustering spike with graph-based methods. a, Illustration of the iterative re-assignment process. At each iteration, a node is assigned to the cluster which has most of its neighbors. A penalty is used to compensate for larger clusters having more neighbors. This process is initialized with 200 clusters obtained from K-means $^{++}$ [14] and converges to a smaller set of clusters in tens of iterations. b, Example clustering produced by this process overlaid on a t-SNE visualization (data from [15]). c, Merging tree formed by merging clusters according to the modularity cost function. Colored branches correspond to merges that were accepted. The tree is traversed from top to bottom to make split/merge decisions. d, Criteria for performin merge/split decisio n the merging tree: (top) projection across the regression axis has to be bimodal, (bottom) cross-correlo of spike times not be refractor (dashed line indicates approximate refractory criterion). e, Final result of the clustering algorithm afte units grayed out. g, Average waveforms of units with refractory periods and the total number of spikes in each cluster. h, (diag na Auto- rams; (below diagonal) projection on regression axes; (above diagonal) cross-correlograms. i, Subset of spikes colored by their final assigned clusters. Non-refractory units shown in gray.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Graph-based clustering with merging trees",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "We developed two new clustering algorithms for spike features extracted by template deconvolution. In Kilosort3, we developed an algorithm that uses a recursive application of the bimodality pursuit algorithm from Kilosort2, which in turn had been developed to automatically find potential splits within clusters (see Methods). In Kilosort4 we developed a graph-based clustering method. This approach first constructs a graph of points connected to their nearest neighbors in Eu",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "189 clidean space, then constructs a cost function from\n190 the graph properties to encourage the clustering of\n191 nodes. A popular cost function is “modularity”, which\n192 counts the number of graph edges inside a cluster\n193 and compares them to the expected number of edges\n194 from a disorganized, unclustered null model [16]. Well\n195 known implementations of modularity optimization are\n196 the Leiden and Louvain algorithms [17, 18]. Applied\n197 directly to spike features, these established algorithms\n198 fail in a few different ways: 1) difficulty partitioning clus\n199 ters with very different number of points; 2) very slow\n200 processing speed for hundreds of thousands of points;\n201 3) cannot use domain knowledge to make merge/split\n202 decisions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To remedy these problems, we developed a new graph-based algorithm, in which the clusters are defined as the stationary points of an iterative neighbor reassignment algorithm based on the modularity cost function (Figure 2a and see Methods). This method allowed us to find more of the small clusters compared to a straightforward application of the Leiden algorithm (Figure 2b). To improve the processing speed, which typically grows quadratically in the number of data points, we developed a landmark-based version of the algorithm which uses nearest neighbors within a subset of all data points. The application of this algorithm resulted in oversplit clusters, which required additional merges using domain knowledge. To find the best merges efficiently, we used the modularity cost function to construct a “merging tree” (Figure 2c). Potential splits in this tree were tested using two criteria: 1) a bimodal distribution of spike projections along the regression axis between the two sub-clusters (Figure 2d, top), and 2) whether the cross-correlogram was refractory or not (Figure 2d, bottom).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "This clustering algorithm was applied to groups of spikes originating from the same $40~{\\upmu\\mathrm{m}}$ vertical section of the probe. After all sections were clustered, an additional merging step was performed which tested the refractoriness of the cross-correlogram for all pairs of templates with a correlation above 0.5, similar to the global merging step from previous versions $(2/2.5/3)$ . The final results are shown in (Figure 2e). Units that did not have a refractory period are shown grayed out in (Figure 2f); they likely correspond to neurons that were not well isolated. A quick overview of the units identified on this section of the probe shows that all units had refractory auto-correlograms, all pairs of clusters had bimodal projections on their respective regression axes, and all pairs of clusters had flat, non-refractory cross-correlograms (Figure 2h). These properties together indicate that these nine units correspond to nine distinct, well-isolated neurons. These clusters can also be visualized on the probe, in their local contexts (Figure 2i).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Electrical simulations with realistic drift",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "To test the performance of Kilosort4 and previous versions, we next developed a set of realistic simulations with different drift patterns. Constructing such a simulation requires knowledge of the dense electric fields of a neuron, because different drift levels sample the electric field at different positions. We obtained this knowledge by sampling neurons from recordings with large drift (Figure 3a) from a public repository of more than 500 Neuropixels recordings from the IBL consortium (Figure 3b). In this repository, we found 11 recordings with large, continuous drift that spanned over at least $40~{\\upmu\\mathrm{m}}$ , which is the spatial repetition period of a Neuropixels probe. We separately built two pools of units: one from neurons that were wellisolated and had refractory periods, and one from multi-unit activity which had refractory period contaminations. Drift levels were discretized in $2\\ \\upmu\\mathrm{m}$ intervals, and only units with enough spikes in each drift interval were considered. The average waveforms at five positions is shown for a few examples (Figure 3c and Figure S2a,b). To simulate drift, we generated a single average drift trace and additional deviations for each channel to account for heterogeneous drift. Spike trains were generated using shuffled inter-spike intervals from real units. For each simulation, a set of 600 ground-truth neurons were generated in this fashion, with amplitudes drawn from a truncated exponential distribution which matched the amplitudes in real datasets. Another 600 “multi-units” were added with lower amplitudes (Figure 3d). Additional independent noise was added on each channel. The resulting simulation was “un-whitened” across channels using a rotation matrix from real experiments (Figure S2c).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "This simulation framework allowed us to test many algorithms across many simulated experimental conditions [2, 3, 6, 19–23]. All algorithms other than Kilosort4 were run through their respective SpikeInterface wrappers to ensure consistent processing, and parameter adjustments were made in some cases to improve results (see Methods) [24]. The latest algorithm versions as of December 2022 were used in all cases, which are often substantially different from the initial published versions [2, 3]. Results for all conditions are shown in (Figure 3e-j) and quantified in Table 2. All the algorithms had reasonable run times (within 2x the duration of the simulations). The drift conditions we chose were based on patterns of drift identified in the IBL dataset (Figure S3): no drift, medium drift, high drift, fast drift and step drift. The medium drift condition was matched to the median recording from the IBL dataset. The high drift condition had a drift range spanning the entire $40\\upmu\\mathrm{m}$ spatial period of the probe, thus sampling all potential shapes of each waveform. The fast drift condition uses drift on the timescale of seconds and sub-seconds, to simulate fast head movements such as during a behavioral task. The step drift condition simulates abrupt changes during an experiment, which are common in the IBL dataset and likely caused by excessive animal movements. This condition also simulates chronic recordings made on different days, where the probe is stationary on each day, but moves in-between days. Since this condition was the most difficult for all algorithms, we also tested whether an aligned sites probe configuration (such as in Neuropixels 2) improves the results.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who has granted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/e6f58e5ee7824af3f8f1d132573dee353587a65d9c5dfa4de0483483dd8abad4.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Figure 3: Spike sorting simulations and benchmarks. a, Example drift traces at different depths for a recording with large drift from the IBL dataset. b, Distribution of drift ranges across all IBL recordings. Drift range was defined as the difference between the $5^{\\mathrm{th}}$ and $95^{\\mathrm{th}}$ percentile of the median drift across channels. c, Waveforms of example units at multiple drift positions. d, Segment of a simulated recording with drift over 70 channels and 1,000 timepoints. e-j, Accuracy of spike-sorting algorithms on simulations with various drift profiles. Left: simulated drift traces. Right: sorted accuracies for 600 ground truth units from each simulation matched to the results of each algorithm. The accuracy score is defined as 1 - FP - FN, where FP is the false positive rate and FN is the false negative rate (see Methods). e, No drift. f, Medium drift. g, High drift. h, Fast drift (10 minutes out of 45 minutes plotted for visibility). i, Step drift. j, Step drift for a probe with aligned sites.\nTable 2: Number of correctly identified units in simulations. Number of detected units that matched ground truth units with a 1 - FP - FN score greater than 0.8, for each simulation. Runtime averaged over the 6 simulations of 45 minutes each $\\pm$ s.e.m. (RTX $3090+2\\mathrm{x}$ Intel Xeon Gold $6\\bar{3}48+55\\mathsf{D},$ ).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Benchmarks",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Kilosort 2, 2.5, 3 and 4 outperformed all other algorithms in all cases. Kilosort 1 performed poorly, due to the lack of drift correction and its bias towards oversplit units. The nearest competing algorithm in performance was IronClust developed by the Flatiron Institute, which accounts for drift in a different way from Kilosort [19]. IronClust generally found $\\sim50\\%$ of all units, compared to the $80\\mathrm{-}90\\%$ found by Kilosort4 (Table 2). Many of the algorithms tested did not have explicit drift correction. Some of these (SpyKING CIRCUS, MountainSort4) matched the IronClust performance at no drift, medium and fast drift, but their performance deteriorated drastically with higher drift [2, 3]. Among all algorithms with explicit drift correction (Kilosort 2.5, 3 and 4), Kilosort4 consistently performed better due to its improved clustering algorithm, and in some cases performed much better (on the step drift conditions). As we suspected, the aligned sites condition recovered the full performance of Kilosort4 on the step drift simulations, likely because it reduces the vertical sampling from $40\\upmu\\mathrm{m}$ to $20~{\\upmu\\mathrm{m}}$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "We also tested how well the drift amplitudes were identified by the drift detection algorithm from Kilosort2.5 (in the Kilosort4 implementation) and found good performance in all cases, except for the fast drift condition where the timescale of drift was faster than the 2 sec bin size used for drift correction (Figure S4). Much smaller bin sizes cannot be used for drift estimation, since a minimum number of spike samples is required. Nonetheless, the results show that Kilosort still performed well in this case, likely due to the robustness of the clustering algorithms. Finally, we calculated the performance of the algorithms as a function of the ground truth firing rates, amplitudes and spatial extents (Figure S5). The dependence of Kilosort4 on these variables was minimal. However, some of the other algorithms had a strong dependence on amplitude, which could not be improved by lowering spike detection thresholds. Also, many algorithms performed more poorly when the waveforms had a large spatial extent as opposed to having their electrical fields concentrated on just a few channels.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Discussion",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Here we described Kilosort, a computational framework for spike sorting electrophysiological data. The latest version, Kilosort4, represents our cumulative development efforts over the past eight years, containing algorithms like template deconvolution (from Kilosort1), drift correction (from Kilosort2.5), as well as completely new clustering algorithms based on graph methods. Furthermore, Kilosort4 was re-written from the ground up in Python, an open-source programming language, using the pytorch package for GPU acceleration. The popularity of pytorch/python should ensure that Kilosort continues to be further improved and developed. We have also developed a new simulation framework to improve the benchmarking of spike sorting algorithms. Our simulations contain realistic background noise and realistic drift with diverse properties, and they are qualitatively similar to real recordings with Neuropixels probes. Kilosort4 outperformed all other algorithms on all simulation conditions, in some cases by a large margin.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "All versions of Kilosort have been developed primarily on Neuropixels data. However, since Kilosort adapts to the data statistics, it has been used widely on other types of probes and other recording methods. Some types of data do require special consideration. For example, some data cannot be drift corrected effectively due to either lacking a well-defined geometry (tetrodes), or due to the vertical spacing between electrodes being too high (more than $40~{\\upmu\\mathrm{m}})$ . This consideration also applies to data from single electrodes such as in a Utah array. Kilosort2 might be a better algorithm for such data, because it performs drift tracking without requiring an explicit channel geometry. Based on our benchmarks, Kilosort2 with drift tracking performs similarly to Kilosort2.5 with drift correction, except for the cases where step drift is present. Data from retinal arrays does not require drift correction and may be processed through Kilosort4, but it may require large amounts of GPU RAM for arrays with thousands of electrodes and thus would be better split into multiple sections and processed separately. Another special type of data are cerebellar neurons with complex spikes, which can have variable, complex shapes that are not well matched by a single template, and specialized algorithms for detection may be required [25]. Another special type of recording comes from chronic experiments over multiple days, potentially separated by long intervals. While we have not explicitly tested such recordings here, the benchmark results for the step drift simulation are encouraging because this simulation qualitatively matches changes we have seen chronically with implanted Neuropixels 2 electrodes [9].",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The problem of identifying neurons from extracellular recordings has a long history in neuroscience. The substantial progress seen in the past several years stems from multiple simultaneous developments: engineering of better devices (Neuropixels and others), better algorithms (Kilosort and others), improved visualizations of spike sorting results (Phy) and multiple rounds of user feedback provided by a quicklyexpanding community. Computational requirements have sometimes influenced the design of new probes,",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who h ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "such as the aligned sites and reduced vertical spacing of Neuropixels 2 which were motivated by the need for better drift correction. Such computational considerations will hopefully continue to influence the development of future devices to increase the quality and quantity of neurons recovered by spike sorting.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Acknowledgments",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "This research was funded by the Howard Hughes Medical Institute at the Janelia Research Campus.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Author contributions",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "M.P. designed and built all versions of Kilosort. S.S. wrote the python GUI and C.S. developed the drifting simulations. C.S. and M.P. performed data analysis, coordinated the project and wrote the paper.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Code availability",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Kilosort4 will be available upon publication at https: //www.github.com/mouseland/kilosort. Version 2, 2.5 and 3 are currently available at the same link.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Data availability",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "We used datasets shared by Nick Steinmetz and the International Brain Laboratory [13, 15]. The datasets are available at at http: //data.cortexlab.net/singlePhase3/ and https://ibl.flatironinstitute.org/public/.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Methods",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The Kilosort4 code library is implemented in Python 3 [10] using pytorch, numpy, scipy, scikit-learn, faiss-cpu , numba and tqdm [11, 26–32]. The graphical user interface additionally uses PyQt and pyqtgraph [12, 33]. The figures were made using matplotlib and jupyternotebook [34, 35]. Kilosort 2, 2.5 and 3 were implemented in MATLAB.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "We demonstrate the Kilosort4 method stepby-step in Figure 1 and Figure 2. In Figure 1 an electrophysiological recording from Nick Steinmetz was used (”Single Phase 3”; [13] and https://figshare.com/articles/Single Phase3_Neuropixels_Dataset/7666892). In Figure 2 an electrophysiological recording from the International Brain Laboratory was used (id: 6f6d2c8e28be-49f4-ae4d-06be2d3148c1; [15]). Both recordings were performed with a Neuropixels 1.0 probe, which has 384 sites organized in rows of two with a vertical spacing of $20~{\\upmu\\mathrm{m}}$ , a horizontal spacing of 32 $\\upmu\\mathrm{m}$ . Due to the staggered design ( $16~{\\upmu\\mathrm{m}}$ horizontal offset between consecutive rows), the spatial repetition period of this probe is $40\\upmu\\mathrm{m}$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Graphical user interface (GUI)",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "We developed a graphical user interface to facilitate the user interaction with Kilosort4. This interface was built using pyqtgraph which itself uses PyQt [12, 33], and it replicates the Matlab GUI which was originally built for Kilosort2 by Nick Steinmetz. The GUI allows the user to select a data file, a configuration file for the probe, and set the most important parameters manually. In addition, a probe file can be constructed directly in the GUI. After loading the data and configuration file, the GUI displays a short segment of the data, which can be used to determine if the configuration was correct. Typical mistakes are easy to identify. For example if the total number of channels is incorrect, then the data will appear to be diagonally “streaked” because multi-channel patterns will be offset by 1 or 2 extra samples on each consecutive channel. Another typical problem is having an incorrect order of channels, in which case the user will see clear single-channel but no multi-channel waveforms. Finally, the GUI can produce several plots during runs which can be used to diagnose drift correction and the overall spike rates of the recording.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Algorithms for Kilosort4",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "In the next several sections we describe the algorithmic steps in Kilosort4. Some of these steps are inherited or evolved from previous versions. For clarity, we describe each of the steps exactly as they are currently used in Kilosort4. If a previous version of Kilosort is different, we clearly indicate the difference. We dedicate a completely separate section below for algorithms not used in Kilosort4 but used in previous versions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Many of the processing operations are performed on a per-batch basis. The default batch size is $N_{T}=$ $60,000$ , and it was $N_{T}=65,536$ in versions $2/2.5/3$ and $N_{T}=32,768$ in version 1. The increase in batch size in Kilosort2 was designed to allow better perbatch estimation of drift properties. Due to the perbatch application of temporal operations, we require special considerations at batch boundaries. Every batch of data is loaded with left and right padding of $n_{t}$ additional timepoints on each side $(n_{t}=61$ by default). On the first batch, the left pad consists of the first data sample repeated $n_{t}$ times. The last batch is typically less than a full batch size of $N_{T}$ . For consistency, we pad this batch to the full $N_{T}$ size using the repeated last value in the data.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The clustering in Kilosort $_{3/4}$ is done in small $40\\upmu\\mathrm{m}$ sections of the probe, but including information from nearby channels and including spikes extracted at all timepoints.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "515 Preprocessing",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Our standard preprocessing pipeline includes a sequence of operations: common average referencing (CAR), temporal filtering, channel whitening and drift correction. In Kilosort4, all these steps are performed on demand whenever a batch of data is needed. In all previous versions, the preprocessing of the entire data was done first and the preprocessed data was stored in a separate binary file. Drift correction was introduced in Kilosort 2.5.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "525 Common average referencing",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The first operations applied to data are to remove the mean across time for each batch, followed by removing the median across channels (common average referencing or CAR). The CAR can substantially reduce the impact of artifacts coming from remote sources such as room noise or optogenetics. The CAR must be applied before the other filtering and whitening operations, so that large artifacts do not ”leak” into other data samples.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "535 Temporal filtering",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "This is a per-channel filtering operation which defaults to a high-pass filter at $300\\mathsf{H z}$ . Bandpass filtering is typically done using IIR filters for example with Butterworth coefficients. Butterworth filters have some desirable properties in the frequency space, but their implementation on the GPU is slow. To accelerate it, we switch to using an FIR filter that simulates the Butterworth filter and we perform the FIR operation in FFT space taking advantage of the convolution theorem. To get the impulse response of a Butterworth filter, we simply filter a vector of size $N_{T}$ with all zeros and a single 1 value at position floor $(N_{T}/2)$ (0-indexed).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "548 Channel whitening",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "549 While temporal filtering reduces time-lagged corre\n550 lations coming from background electrical activity, it\n551 does not reduce across-channel correlations. To re\n552 duce the impact of local sources, such as spikes from\n553 $100{-}1000\\upmu m$ away from the probe, we perform chan\n554 nel whitening in local neighborhoods of channels. A\n555 separate whitening vector is estimated for each chan\n556 nel based on its nearest 32 channels using the so\n557 called ZCA transform, which stands for Zero Phase\n558 Component Analysis [36]. ZCA is the data whitening\n559 transformation which is closest in Euclidean norm to\n560 the original data. For an $N$ by $T$ matrix $A$ , the ZCA\n561 transform matrix $W$ is found by inverting the covari\n562 ance matrix, using epsilon-smoothing of the singular\n563 values:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{c}{C=\\mathsf{c o v}(A)}\\\\ {U,S,V=\\mathsf{s v d}(C)}\\\\ {W=U(S+\\mathsf{\\pmb{\\varepsilon}}I)^{-\\frac{1}{2}}U^{T}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The local whitening matrix $W$ is calculated separately for each channel and its neighborhood of 32 channels, and only the whitening vector corresponding to that channel is kept and embedded into a fullsize $N_{c h a n}$ by $N_{c h a n}$ matrix. This is preferable to directly calculating a grand $N_{c h a n}$ by $N_{c h a n}$ whitening matrix because it reduces the number of whitening coefficients to $32\\cdot N_{c h a n}$ instead of $N_{c h a n}\\cdot N_{c h a n}$ which prevents overfitting in the limit of a large $N_{c h a n}$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "573 Drift correction",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Drift correction is a complex preprocessing step which was described in detail in [9]. Here we only described a few small modifications in Kilosort4. The drift correction process can be separated into drift estimation and data alignment. In Kilosort4, drift estimation is performed in advance, while data alignment is performed on-demand along with the other preprocessing operations. Drift estimation includes a step of spike detection, which uses a set of predefined, “universal” templates to detect multi-channel spikes. In Kilosort 2.5 and 3, these predefined templates were constrained to be negative-going spikes, while in Kilosort4 we consider both positive and negative going spikes using pairs of inverted templates (for fast computation). Another modification in Kilosort4 is the use of linear interpolation for sampling the drift traces at every channel, in place of the “Makima” method used in previous versions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Since data alignment is a linear operation performed with a Gaussian kriging kernel, it can be combined with channel whitening which is also a linear operation. In practical terms, the two $N_{c h a n}$ by $N_{c h a n}$ matrix multiplications are combined into one, thus further accelerating the computation.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Template deconvolution",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Template deconvolution is the process of using a set of waveform templates matched to the data in order to detect spikes and extract their features, even when they overlap other spikes on the same channels and at the same timepoints. Template deconvolution can be seen as replacing the spike detection step in a classical spike sorting pipeline. The goal in Kilosort4 is to extract all the spikes above a certain waveform norm, and calculate their spike features in a way that discards",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who h ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "8 the contribution of nearby overlapping spikes. Tem\n9 plate deconvolution improves on classical spike detec\n10 tion in several ways:",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The detection of the spikes is performed by template matching, which is a more effective way of detecting spikes compared to threshold crossings, because it uses templates that represent the multi-channel spikes of the neurons being matched.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Spikes that overlap in time and channels can be detected and extracted as separate events due to the use of iterative matching pursuit. Classical methods require an ”interdiction” area in time and channels around each detected spike where a second spike detection is disallowed, in order to prevent double detections of the same spike.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The features extracted for each spike can be decontaminated from other overlapping spikes, due to the use of a generative or reconstructive model. As described below, these features are robust to imperfectly chosen templates.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "628 Template learning",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "To perform template deconvolution, a set of templates must be learned that can match all the detectable spikes on the probe. In previous Kilosort versions (1 / 2 / 2.5), special care was taken to ensure that these templates match neural waveforms on a one-to-one basis. This was necessary because relatively few additional merges and splits were performed after template deconvolution. In Kilosort 3 and 4, the templates do not need to match single neurons because the features extracted by template deconvolution are clustered again using more refined clustering algorithms. However, it is important that every spike in the raw data has some template to match to.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To build a set of templates, we perform clustering on a set of spikes identified by template matching with a set of universal spike templates. This initial spike detection step is equivalent to the spike detection performed in Kilosort 2.5 for drift correction. The universal templates are defined by all possible combinations of 1) a spatial position in 2D; 2) a single-channel waveform shape; 3) a spatial size. The spatial positions need not be coincident with actual probe channels, and we choose them to upsample the channel densities by a factor of 2 in each dimension. For a Neuropixels 1 probe, this corresponds to 1536 positions. The single-channel waveform shapes are obtained by kmeans clustering of single channel spikes, either from a pre-existing dataset (IBL dataset) or from spikes detected by threshold crossings in the data, and we default to 6 such waveforms. Finally, the spatial sizes (five by default) define the envelope of an isotropic Gaussian centered on the spatial position of the template, which is used as per-channel amplitudes. In total, a set of 46,080 universal templates are used for a Neuropixels 1 probe; for more details see [9]. The spatial footprints are explicitly precomputed for all positions and all spatial sizes. The templates are effectively normalized to unit norm by separately normalizing the per-channel waveform templates and the spatial footprints. Since the universal templates are unit norm, their variance explained at each timepoint can be easily calculated as the dot product with the data, squared:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{r l}&{V_{\\mathrm{explained}}=\\|D\\|^{2}-\\mathsf{m i n}_{x}\\|D-x W\\|^{2}}\\\\ &{\\qquad=\\|D\\|^{2}-\\|D-(W^{T}D)W\\|^{2}}\\\\ &{\\qquad=(W^{T}D)^{2}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "where $W$ is the unit-norm universal template, $D$ is the data over a particular set of channels and timepoints, and $x$ is the best matching amplitude that the template needs to be multiplied by to match the data.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The dot products between each of these templates and the data at each timepoint can be performed efficiently in the following order: 1) temporal convolution of each data channel with each of the 6 single-channel waveforms; 2) per timepoint matrix multiplication with a set of weights corresponding to all positions and all spatial sizes. Once the dot products are calculated in this manner, the largest variance explained value is kept at each spatial position of each template. For a Neuropixels probe, this is a matrix of size 1536 by $N_{T}$ (batch size). The goal of this spike detection step is to find localized peaks in this matrix, which must be local maxima in a neighborhood of timepoints $(\\pm20)$ and spatial positions (100 nearest positions). The relatively large neighborhood size ensures that no spike is detected twice, but prevents many overlapping spikes from being detected (typically about $50\\%$ of spikes go undetected). However, the missing spikes are not a concern for the purpose of template learning, since it is extremely unlikely that all the spikes from a neuron will be consistently missed by this procedure.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Once the spikes are detected, we extract PC features in the 10 nearest channels to each detection. We use a set of six PCs which are found either from a preexisting dataset (IBL dataset) or from spikes detected by threshold crossings. For each spike, an XY position on the probe is computed based on the center-of-mass across channels of the spike’s projection on the bestmatching single channel template (same as in Kilosort 2.5). We assign all spikes in $40~{\\upmu\\mathrm{m}}$ bins according to their vertical position, and embed all spikes detected in the same bin to the same set of channels (which is",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "08 usually more than 10 channels due to differences be\n709 tween spike positions). Finally, the embedded PC fea\n10 tures are clustered according to the same graph-based\n11 clustering algorithm we describe below, using only the\n12 merging criterion of the bimodal regression-axis and\n13 not using the cross-correlation based criterion. In Kilo\n14 sort3, the same procedure is applied but the clustering\n15 algorithm is recursive pursuit. After clustering each 40\n16 $\\upmu\\mathrm{m}$ section of the probe, the centroids are multiplied\n17 back from PC space into spatio-temporal waveforms,\n18 and pooled together across the probe.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Templates from the same neuron may be detected multiple times, either on the same $40~{\\upmu\\mathrm{m}}$ section or in nearby sections. This is not inherently a problem because each neuron can have multiple templates. However, it can become a problem if these multiple templates are not aligned to each other, because then spikes from the same neuron will be detected at different temporal positions, which changes their PC feature distribution. In addition, having many templates makes the spike detection step memory and compute inefficient. A solution to both these problems is to merge together templates which have a high correlation with each other and similar means, where the correlation is maximized across possible timelags. In addition, we temporally align all templates based on their maximal correlation with the same six prototypical singlechannel waveforms describe above. Note that this merging step may result in the opposite scenario of having one template for multiple neurons. This is also not a problem, because templates are only merged when they have a high correlation, and thus the same average template can successfully match the shape of multiple neurons.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Spike detection with learned templates and matching pursuit",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Once a set of templates is learned, they can be used for template matching similar to the universal templates described above. The main difference is that instead of allowing for an arbitrary scaling factor $x$ , we require that matches use the average amplitude of the template it was found with. The variance explained of learned template $W$ of some data $D$ thus becomes:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{r l}&{V_{\\mathrm{explained}}=\\|D\\|^{2}-\\mathsf{m i n}_{x}\\|D-x_{W}W\\|^{2}}\\\\ &{\\qquad=2x_{W}W^{T}D-x_{W}^{2}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "751 Like before, this quantity only requires the calcula\n752 tion of $W^{T}D$ , which can be done convolutionally for\n753 each template. In practice, we represent templates us",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "ing a three-rank approximation, factorized over channels and time, which speeds up the convolutions dramatically [6]. We first multiply the data with the channel weights for each rank, and convolve the resulting traces with the temporal components. The threerank approximation captures nearly the entire waveform variance in all cases ([6]), and also helps to denoise templates calculated from relatively few spikes.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To extract overlapping spikes, we must detect spikes iteratively over the same portion of data, and subtract off from the data those parts attributed to spike detections. This subtraction allows for another pass of detections to be performed, which can detect other spikes left over and yet un-subtracted. This procedure is called matching pursuit ([37]) and is fundamentally a sequential process: to detect another spike, one must first subtract off the contributions of spikes detected before. However, we can parallelize this step thus making it suitable for GPU processing by observing that the subtraction of a single spike results in highly-localized changes to the data, which cannot affect the calculated amplitudes far from the position of that subtracted spike. Thus, we can detect and subtract multiple spikes in one round as long as they are far enough from each other. Upon calculating a matrix of variance explained for each template at each timepoint, we detect peaks in this matrix which are local maxima over local neighborhoods in time $\\pm n_{t}$ time samples, and across all channels. After detection, the optimal amplitude for each spike is calculated and its contribution from the data is subtracted off. To avoid recalculating the dot products of templates at all timepoints, the contribution of the subtracted spikes to the dot-products is directly updated locally using a set of precomputed dot-products between templates, at all possible timelags. This detection and subtraction process is repeated for 50 rounds, with later rounds being much faster due to the increasingly smaller number of spikes left to extract.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Extracting PC features with background subtraction",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The final step in template deconvolution is to extract features from the data to be used by the clustering algorithm. One possibility would be to directly extract PC features from the preprocessed data, at the spike detection times (Figure 1h), however this results in contamination with background spikes. A better option is to first subtract the effect of other spikes, since we know from the matching pursuit step how much these other spikes contribute (Figure 1e). To do this computation efficiently, we first extract PC features from the residual (Figure 1f), and then add back to these features the contribution of the template which was used to extract the spike. The contribution of each template",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "807 in PC space is precomputed for faster processing.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Graph-based clustering",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The new clustering algorithm in Kilosort4 uses graphbased algorithms. This class of algorithms relies entirely on the graph constructed by finding the nearest neighbors to each data point. There are several steps:",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Neighbor finding with subsampling",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Iterative neighbor reassignment",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Hierarchical linkage tree",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "816 Neighbor finding with subsampling",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Many frameworks for fast neighbor finding exist and we tested a lot of them for spike sorting data. In the end, the brute force implementation from the faiss framework [38] outperformed other approaches in speed on modern multi-core computers for the range of data points we need to search over (10,000-100,000) and the number of data points we need to find neighbors for (100,000-1,000,000).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "5 Iterative neighbor assignment",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Clustering algorithms based on graphs typically optimize a cost function such as the modularity cost function. We review this approach first, before describing our new approach. Following [17], the modularity cost function is defined by",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n{\\mathcal{H}}={\\frac{1}{2m}}\\sum_{c}\\left(e_{c}-\\gamma{\\frac{K_{c}^{2}}{2m}}\\right)\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "where m is the total number of edges in the graph, $e_{c}$ is the number of edges in community $c$ , $K_{c}$ is the sum of degrees in community $c$ and $\\upgamma$ is a “resolution” parameter that controls the number of clusters. The 2Kcm2 can be interpreted as the expected number of edges in community $c$ from a null model with the same node degrees as the data but otherwise random graph connections.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Specialized optimization algorithms exist to maximize the modularity cost function by moving nodes between communities and performing merges when the node re-assignment converges [18]. Additionally, splitting steps and other optimizations were recently introduced which improve the results of the algorithm and its speed [17]. These algorithms are effective for many types of data, yet have a substantial failure mode for spike sorting data: they have difficulty clustering data with very different number of points per cluster. In practice, for our clustering problems, there are often very large clusters of up to 100,000 points together with clusters with many fewer $(<1,000)$ points. A low resolution parameter $\\upgamma$ can keep the large cluster in one piece, but also merges the small clusters into larger clusters. Conversely, high resolution parameters may return the small clusters as individual clusters, but can split the large cluster into very many (hundreds) of pieces. The oversplitting is not inherently a bad property, since we will perform merges on these clusters anyway, but the very large number of pieces returned for the large clusters means that very many correct merging decisions must be made, which is in itself a very difficult optimization problem. In addition, running the Louvain/Leiden algorithms with large resolution parameters may somewhat reduce the effectiveness of the algorithm since the community penalty γ 2Kcm only has a null model interpretation for $\\lambda=1$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To improve on these algorithms, we started from the observation that local minima of the neighbor re-assignment step have some desirable properties. These local minima arise because the neighbor reassignment step monotonically improves the modularity cost function by greedily moving nodes to new clusters if that improves the modularity score. This step converges after a while, because no more clusters can be moved. This is however a local minimum of the optimization, and the modularity can often be further increased by making merges between clusters. Unlike the node re-assignment, which consists of small local moves, the merging between clusters is a global move in the cost function and can thus escape the local minimum. Algorithms like Leiden/Louvain take advantage of such global merges by applying the node re-assignment step again on a new graph made by aggregating all the points into their clusters when the local minimum is reached.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Our observation was that the local minima themselves can consist of good clustering, if the neighbor re-assignment step is initialized appropriately. Our initialization uses the K-means $^{++}$ algorithm to partition the data initially into 200 clusters [14]. The node reassignment algorithm for the modularity cost function with $\\gamma=1$ is run for a fixed number of iterations (typically sufficient for convergence). The converged partitioning of the data is then used as a clustering result. Especially relevant to the next step, the algorithm almost never made incorrect merges, and instead output some clusters oversplit. This bias towards oversplitting is important, because it allows us to correct the mistakes of the algorithm by making correct merge decisions, which is much easier than finding the correct split in a cluster.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "We also found that clusters which were oversplit generally had a reason to be oversplit: the separate pieces identified by the algorithm were in fact sufficiently different to create a local minimum in the clus",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha nted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "906 ter assignments. This is a common problem in spike\n907 sorting data, where nonlinear changes in the waveform\n908 can result in clusters that appear bimodal in Euclidian\n909 space. An extreme example of this effect is due to\n910 abrupt drifts of the probe changing the sampling of the\n911 waveforms by a non-integer multiple of the probe pe\n912 riod. Even after drift correction, waveforms sampled\n913 at the two different positions will be much more similar\n914 to other waveforms from the same position, than they\n915 are to waveforms sampled at the other position (Fig\n916 ure S2b). As a consequence, many algorithms return\n917 such units oversplit into two halves, as can be clearly\n918 seen in the benchmark results for the step drift condi\n919 tion, where many units are identified with exactly a 0.5\n920 score, which corresponds to $50\\%$ of the spikes identi\n921 fied.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "922 Hierarchical merging tree",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "To perform merges, we could take two strategies: 1) a brute-force approach in which we check all pairs of clusters for merges, or at least the ones with high waveform correlation; 2) a directed approach where we use the structure of the data to tell us which merges to check. We use both, starting with the second one to reduce the number of clusters and thus reduce the number of brute-force checks we need to make later.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "For the directed approach, we construct a hierarchical merging tree based on the modularity cost function. The leaves of this tree consist of the clusters identified at the previous step. For each pair of clusters $i,j$ , we aggregate the neighbors and node degrees, similar to the Leiden/Louvain algorithms, thus resulting in a full matrix $K$ of size $n_{k}$ by $n_{k}$ where $n_{k}$ is the number of clusters, and where $K_{i j}$ is the number of edges between clusters $i,j$ , while $K_{i i}$ is the number of internal edges. Additionally, a variable $k_{i}$ holds the aggregated degree of each cluster $i$ . The linkage tree is constructed by varying the resolution parameter $\\gamma$ in the modularity cost function from $\\infty$ down to 0. As γ decreases, merges of two clusters start to increase the modularity cost function. Specifically, a pair of clusters gets merged when the modularity $\\mathcal{H}_{2}$ after merging equals the modularity $\\mathcal{H}_{1}$ before merging, where:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{r l r}&{}&{\\mathcal{H}_{1}=\\left(K_{i i}-\\gamma\\frac{k_{i}^{2}}{2m}\\right)+\\left(K_{j j}-\\gamma\\frac{k_{j}^{2}}{2m}\\right)+\\mathrm{constant}}\\\\ &{}&{\\mathcal{H}_{2}=\\left(K_{i j}+K_{i i}+K_{j j}-\\gamma\\frac{(k_{i}+k_{j})^{2}}{2m}\\right)+\\mathrm{constant}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{c}{\\displaystyle{\\mathcal{H}_{2}-\\mathcal{H}_{1}=K_{i j}-\\hat{\\gamma}_{i j}\\frac{k_{i}k_{j}}{2m}=0}}\\\\ {\\displaystyle{\\hat{\\gamma}_{i j}=\\frac{2m K_{i j}}{k_{i}k_{j}}}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "In other words, a pair of clusters $i,j$ should be merged when $\\upgamma$ reaches a value of $2m K_{i j}/(k_{i}k_{j})$ . After merging, the matrix $K$ and vector $k$ can be recomputed with the two clusters $i,j$ becoming aggregated into one. Note that a merging decision does not change the $\\hat{\\boldsymbol{\\upgamma}}$ for other pairs of clusters, and it cannot result in a higher $\\hat{\\boldsymbol{\\upgamma}}$ than the current $\\hat{\\gamma}_{i j}$ . This can be shown by reductio ad absurdum: if the merged $i,j$ cluster had a higher $\\hat{\\boldsymbol{\\upgamma}}$ with another cluster $l$ , it would imply that one of the original clusters $i$ or $j$ had a higher $\\hat{\\upgamma}_{i l}$ or $\\hat{\\boldsymbol{\\upgamma}}_{j l}$ , and thus it should have been merged a priori. The monotonic property of $\\hat{\\gamma}_{i j}$ ensures that a well-defined merging tree exists, with a strictly decreasing sequence of $\\hat{\\boldsymbol{\\upgamma}}$ for increasingly higher merges in the tree. Empirically, we have found that the resulting merging tree is very useful for making merge/split decisions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Split/merge criteria",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "With the tree constructed, we next move down the tree starting from the top and make individual merge/split decisions at every node. If a node is not being split, then the splits below that node are no longer checked. We use two splitting criteria: 1) the bimodality of the data projection along the regression axis between the two clusters and 2) the degree of refractoriness of the cross-correlogram. If the pair of units has a refractory cross-correlogram, then the split is always performed. If the cross-correlogram is not refractory, then the split is performed if and only if the projection along the regression axis is bimodal.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Bimodality of regression axis",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Consider a set of spike features $\\mathbf{x}_{k}$ with associated labels $y_{k}\\in\\{-1,1\\}$ , where $^{-1}$ indicates the first cluster and 1 indicates the second cluster. A regression axis ˆu can be obtained by minimizing:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\hat{\\mathbf{u}}=\\mathsf{a r g m i n}_{u}\\sum_{k}\\left(\\mathbf{u}^{T}\\mathbf{x}_{k}-y_{k}\\right)^{2}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "This regression problem becomes highly unbalanced when one of the clusters has many more points than the other. We therefore add a set of weights 6 $w_{-1}=n_{2}/(n_{1}+n_{2}),w_{+1}=n_{1}/(n_{1}+n_{2})$ , where $n_{1}$ , $n_{2}$ are the number of spikes in the first and second 8 cluster.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\hat{\\mathbf{u}}=\\mathsf{a r g m i n}_{u}\\sum_{k}w_{y_{k}}\\left(\\mathbf{u}^{T}\\mathbf{x}_{k}-y_{k}\\right)^{2}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "This weighted regression problem can be solved in the usual fashion. Finally, we use the ˆu axis to estimate how well separated the clusters are by projecting $x_{p r o j}=\\hat{\\mathbf{u}}^{T}\\mathbf{x}_{k}$ . The projections are binned in 400 bins linearly-spaced between $^{-2}$ and 2, and the histogram is gaussian smoothed with a standard deviation of 4 bins. To score the degree of bimodality, we find three important values in the histogram: the peak of the negative portion, the trough around 0, and the peak of the positive portion. First we find the trough $x_{m i n}$ at position $i_{m i n}$ in the bin range of 175 to 225. Then we find the peaks $x_{1}$ , $x_{2}$ in the bin ranges from 0 to $i_{m i n}$ and from $i_{m i n}$ to 400. The bimodality score is defined by",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1027 0.5 sec. We consider the central bins of the cross\n1028 correlograms, and calculate how likely it is to see\n1029 a very small number of coincidences in that bin, if\n1030 the two clusters are from neurons firing independently\n1031 from each other. We define $n_{k}$ as the number of coin\n1032 cidences in the central $-k$ to $+k$ bin range, $R$ as the\n1033 baseline rate of coincidences calculated from the other\n1034 bins of the cross-correlogram. Cross-correlograms\n1035 may be assymetric, and to account for that we esti\n1036 mate $R$ as the maximum rate from either the left or\n1037 right shoulder of the cross-correlogram. We use two\n1038 criteria to determine refractoriness. The first criterion\n1039 is simply based on the ratio of refractory coincidences\n1040 versus coincidences in other bins which works well in\n1041 most cases, except when one of the units has very few\n1042 spikes, in which case very few refractory coicindences\n1043 may be observed just by chance. For the first criterion,\n1044 we use the ratio $R_{12}$ of $n_{k}$ to its expected value from a\n1045 rate $R$ , where $R_{12}$ takes the minimum value of this ratio\n1046 across $k$ . We set a threshold of 0.25 on $R_{12}$ to consider\n1047 a CCG refractory, and 0.1 to consider an ACG refrac\n1048 tory. For the second criterion, we use the probability\n1049 $p_{k}$ that $n_{k}$ spikes or less would be observed from a\n1050 Poisson process with rate $\\lambda_{k}=(2k+1)R$ , which we\n1051 approximate using a Gaussian with the same mean\n1052 and standard deviation as the Poisson process as",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\mathsf{b i m o d}=1-\\mathsf{m a x}\\big(x_{m i n}/x_{1},x_{m i n}/x_{2}\\big)\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "In other words, we compare the density of the $x_{p r o j}$ distribution at its trough to the peak densities for both clusters. If the density at the trough is similar in value to the density of either the left or right peak, that indicates a non-bimodal distribution.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Refractory auto- and cross-correlograms",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "1008 There are many cases where the regression axis has\n1009 a bimodal distribution, yet the clusters are part of the\n1010 same neuron. This is due to the non-stationarity of\n1011 the waveforms from the same neuron, either due to\n1012 drift or due to other factors. In such cases, we need\n1013 to use extra information such as the statistics of the\n1014 spike trains. Fortunately, all neurons have a refractory\n1015 period, which is a short duration (1-5ms) after they fire\n1016 an action potential when they cannot fire again. The\n1017 refractory period is heavily used by human curators to\n1018 decide whether: 1) a cluster is well isolated and not\n1019 contaminated with spikes from other neurons; 2) a pair\n1020 of clusters are distinct neurons or pieces of the same\n1021 neuron. These two decisions can be made based on\n1022 the auto- and cross- correlograms (ACG and CCG) re\n1023 spectively:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{l}{\\mathsf{A C G}(\\&t)=\\displaystyle\\sum_{k,j,s_{k}-s_{j}=\\delta t}1}\\\\ {\\mathsf{C C G}(\\delta t)=\\displaystyle\\sum_{k,j,s_{k}-r_{j}=\\delta t}1}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1024 where $s_{k},r_{j}$ represent the spikes times of the two\n1025 neurons. In practice, we bin the auto- and cross\n1026 correlograms in 1ms bins from $\\updelta t=-0.5$ sec to $\\delta t=$",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\np_{k}=\\frac{1}{2}\\big(1+\\mathsf{e r f}\\left(\\frac{n_{k}-\\lambda_{k}}{(\\pm+2\\lambda_{k})^{1/2}}\\right)\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "where $\\mathfrak{E}=10^{-10}$ is a small constant to prevent taking the square root of 0. If $Q_{12}=\\min(p_{k})$ is large, it implies that the number of refractory spikes have a high chance of being observed from a Poisson distribution with the baseline rate, and thus the CCG is not refractory. We set a threshold on $Q_{12}$ of 0.05 to consider a CCG refractory, and 0.2 to consider an ACG refractory. Both criteria have to be satisfied for a CCG to be refractory: $R_{12}<0.25$ and $Q_{12}<0.05$ for the CCG and $R_{12}<0.1$ and $Q_{12}<0.2$ for the CCG. The different thresholds for ACG and CCG has to do with the function of these decisions: for the ACG, we want small contamination rates $R_{12}$ because it indicates a wellisolated neuron, while for the CCG we want to prevent clusters from being split if their contamination rate $R_{12}$ is indicative of a relation between these two clusters. Similarly for $Q_{12}$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Global merges",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Global merges are performed after all sections of the probe have been clustered. As a similarity metric, we use the maximum correlation of pairs of waveforms over all timelags. To test for merges, we sort all units",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "75 by their number of spikes, and start testing in order\n6 from the units with the most spikes. For each unit, we\n7 find all other units with a similarity above 0.5 and start\n78 testing for merges starting from high to low similarity. A\n79 merge is performed if the cross-correlogram is refrac\n80 tory. After a merge is performed, the merged unit is re\n81 tested again versus all other units with similarity above\n82 0.5 with it. After no more merges can be performed,\n83 a unit is considered “complete”, and is removed from\n4 potential merges with subsequent tested units.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Scaling up the graph-based clustering",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Graph-based clustering algorithms do not scale well with the number of data points, and we had to develop new formulations and optimization strategies. The poor scalability is due to several problems: 1) finding the neighbors of all points scales quadratically with the number of points; 2) the $K$ nearest neighbors in a small dataset are relatively further away from the $K$ nearest neighbors in a larger dataset; 3) existing optimization algorithms like Leiden/Louvain are inherently sequential and thus hard or impossible to parallelize on GPUs. The first problem could be reduced by using some of the neighbor finding algorithms that have sublinear time for finding neighbors [27]. However, for the particular type of data we consider, we find these algorithms to be slower, not faster than the brute force approach, at least when a multi-core CPU is used. The second problem is an issue because the effective neighborhood size around a point influences its clustering properties. If the neighborhood sizes are very small, clusters may split up into multiple pieces more easily. If it is too large, it may include points from other clusters. As a recording grows in duration, the number of spikes grows linearly with it. Thus, some normalization step must be introduced to ensure that neighborhood sizes are comparable for short and long recordings. To solve the third problem, a redesign of the cost function is necessary, so as to make multiple optimization steps in parallel.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Our approach for improving scalability relies on a subsampled data approach, where we only search for neighbors in a smaller subset of all points. In other words, instead of constructing an $N$ by $N$ adjacency matrix, where $N$ is the number of points, we construct an $N$ by $n_{s u b}$ adjacency matrix, where $n_{s u b}$ is a fixed number of spikes independent of recording length, which is determined by the size of the section of the probe being clustered $(40\\ \\upmu\\mathrm{m}$ typically, for which we use $n_{s u b}=25,000)$ . This solves the first two problems, but not the third. To solve the third problem, we treat the adjacency graph as a bipartite graph, by designating the subsampled datapoints as a different set of nodes, which we will call the ”right”",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1128\n1129\n1130\n1131\n1132\n1133\n1134\n1135\n1136\n1137",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "nodes, as opposed to the ”left” nodes which consist of all datapoints. Note that this is purely a mathematical construction, in which we duplicated the subsampled nodes so they exist both among the left and the right nodes. The reason for making the graph bipartite is to allow the cluster identities for left nodes to be optimized independently, given the identities of the right nodes, and viceversa. However, making the graph bipartite is not sufficient, we must also modify the modularity cost function from:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\mathcal{H}=\\frac{1}{2m}\\sum_{c}\\left(e_{c}-\\gamma\\frac{(K_{c}^{l e f t}+K_{c}^{r i g h t})^{2}}{2m}\\right)\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1138 into:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n{\\mathcal{H}}={\\frac{1}{2m}}\\sum_{c}\\left(e_{c}-{\\gamma}{\\frac{K_{c}^{l e f t}K_{c}^{r i g h t}}{2m}}\\right)\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "39 where $K_{c}^{l e f t}$ is the sum of degrees of left nodes in the\n40 cluster $c$ , $K_{c}^{r i g h t}$ is the sum of degrees of right nodes,\n41 and $e_{c}$ are the number of edges between left and right\n42 nodes. If the cluster identities for all right nodes are\n43 fixed, a short calculation shows that every left node $t$\n44 can be assigned independently to a cluster $\\upsigma_{t}$ to max\n45 imize their contribution to the modularity cost function:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\upsigma_{t}=\\mathsf{a r g m a x}_{j}\\left(n_{t c}-\\gamma\\frac{k_{t}K_{c}^{r i g h t}}{2m}\\right)\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "where $n_{t c}$ are the number of right node neighbors of left node $t$ in cluster $c$ , and $k_{t}$ is the degree of node $t$ like before. Similarly, every right node can be assigned independently given fixed assignments for all left nodes. Thus, we can iterate between assigning cluster identities to all right nodes given all the left nodes, followed by assigning all the left nodes given all the right nodes. Note that a left node which represents the same point as a right node may in fact be assigned to a different cluster than its corresponding right node. This new iterative optimization has massive parallelism, and thus is suitable for GPU acceleration.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "This optimization is initialized with 200 clusters identified by K-means $^{++}$ , which we implemented in pytorch for GPU-based scalability [14].",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who h ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Algorithms for Kilosort 2/2.5/3",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The previous section completes the description of Kilosort4. In the next sections, we decribe algorithms from previous versions of Kilosort which have not been previously described. These are divided into drift tracking (Kilosort2), global optimization (Kilosort2/2.5) and recursive pursuit (Kilosort3).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "68 Drift tracking (Kilosort 2)",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Drift tracking was an alternative strategy of accounting for drift. Unlike the drift correction algorithms from Kilosort2.5 and onwards, drift tracking does not require a geometrical model of the recording channels and thus it can be used for recordings with tetrodes, single electrodes etc. Drift tracking works well when drift changes are continuous, or at least the drift positions overall span a continuous range. Drift tracking does not work well when the recording consists mainly of two drift positions, with little sampling of the positions in-between (see step drift benchmarks in Figure 3). Drift tracking requires two algorithmic steps, described below: online template learning and fast drift tracking.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1182 Online template learning and tracking",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "In the simplest case, imagine that the drift of the probe is very slow. A possible spike sorting strategy in that case could be to start by spike sorting a subsection of the data, say 5 minutes, over which the probe is at an almost fixed position, since drift is slow. With the templates learned from 5 minutes of data, one could then use the templates to extract and assign spikes on the next 5 minutes of data, and update the templates based on the spikes that were found. If the drift is slow, the distribution of waveforms from single templates will have only shifted slightly, so that spike assignments to clusters are still correct. The update of the templates would then track the mean of the shifted distribution for each cluster. This is, in a broad sense, the drift tracking strategy from Kilosort2, and it was a natural extension of the online template learning of Kilosort1. In the rest of this section, we describe the exact mathematical form of online template learning.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The generative model of Kilosort is given by the reconstruction cost function:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{l}{l}{\\displaystyle\\mathsf{c o s t}(\\mathbf{W},\\mathbb{o},\\mathbf{s},\\mathbf{x})=}\\\\ {\\displaystyle\\sum_{c t}\\bigg(V(c,t)-\\sum_{k}x(k)\\cdot W_{\\mathbb{o}(k)}\\left(c,t-s(k)\\right)\\bigg)^{2}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1203 where $V(c,t)$ is the recorded voltage at channel $c$\n1204 and timepoint $t$ , $\\upsigma(k)$ is the template index for spike $k$\n1205 at time $s(k)$ , $W_{i}$ is the multi-channel template for cluster\n1206 $i$ and $x(k)$ is the amplitude of spike $k$ . For mathemat\n1207 ical simplicity, we assume “infinite” temporal windows\n1208 for each template $W_{i}$ and we also assume that they\n1209 span all channels of the probe, but in practice we re\n1210 strict each template to a width of $n_{t}=61$ samples and\n1211 to a small number of channels (typically 32). Learning\n1212 and inference in this model proceeds via the standard\n1213 “EM-style” algorithm. For inference, we assume the\n1214 templates $W$ are fixed, and we simultaneously infer\n1215 $s(k),\\upsigma(k),x(k)$ for all $k$ via the parallelized matching\n1216 pursuit algorithm described above. Learning proceeds\n1217 iteratively by inferring ${\\mathbf s},{\\upsigma},{\\mathbf x}$ from a single batch with\n1218 the current $W$ , and computing an improved $W$ for this\n1219 batch:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{r}{W_{i}^{\\mathsf{b a t c h}}(c,t)=\\displaystyle\\sum_{k,\\upsigma(k)=i}V(c,s(k)+t)/n_{i}}\\\\ {n_{i}=\\displaystyle\\sum_{k,\\upsigma(k)=i}1}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1220 where we omit the dependence on amplitudes $x(k)$\n1221 for robustness, since outlier artifacts may have very\n1222 large $x_{k}$ that could dominate the templates. To con\n1223 vert this EM-style algorithm into an online algorithm,\n1224 we perform the inference at a single batch level $(\\approx2$\n1225 sec), and update the templates with an exponential fil\n1226 ter which depends on the number of spikes inferred for\n1227 each template:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{c}{{W_{i}^{n e w}=p_{i}W_{i}^{o l d}+(1-p_{i})W_{i}^{\\mathsf{b a t c h}}}}\\\\ {{p_{i}=\\mathsf{e x p}(-n_{i}/\\uptau)}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1228 where $\\boldsymbol{\\uptau}$ is typically set to 400 spikes. In other words,\n1229 it takes approximately 400 new inferred spikes for $W_{i}$\n1230 to “forget” its previous value. For learning to be ef\n1231 fective, the batches from one recording are processed\n1232 in pseudorandom order in Kilosort1. For tracking in\n1233 Kilosort2, we fix the order of the batches. For ex\n1234 ample, if the batches were processed in consecutive\n1235 order 1, 2, 3, etc, then online learning of the tem\n1236 plates would ensure tracking of the slow changes in\n1237 templates over long timescales, similar to the simple\n1238 scenario describe at the beginning of this section. In\n1239 practice however, drift often contains fast components\n1240 in addition to slow components. Since the $\\boldsymbol{\\tau}$ scale is\n1241 set to 400 spikes, fast drift cannot be tracked well with\n1242 this approach. Reducing $\\boldsymbol{\\uptau}$ would improve tracking, at\n1243 least for neurons with high firing rates, but many neu\n1244 rons fire at $\\sim1{\\sf H z}$ and/or in bursty sequeces. For such\n1245 neurons, drift movements $<1$ min would be quite diffi\n1246 cult to track, since very few spike samples of the neu\n1247 rons are seen in that time.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To track fast drift, we make another modification to the online template learning algorithm. Instead of processing the batches in random order (like in Kilosort1), or in consecutive order (like for slow drift), we use a special re-ordering of the batches which puts similar batches next to each other. We define and estimate a drift dissimilarity metric between batches, based on the distributions of spike shapes in each batch.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To construct the drift similarity metric, the first step is to extract a set of templates $\\mathbf{\\dot{W}}^{k}$ for each batch $k$ . These templates are obtained by first detecting spikes via threshold crossing of PC-projected data. The PC projection is performed by convolving the data with the top three PCs, squaring and adding together the projections. Local maxima in this projection are found in a neighborhood of the nearest 17 channels and 61 timepoints. The features are extracted at the local maxima via PC projection for a subset of neighboring channels. Scaled k-means clustering is then performed, which is initialized with a random subset of the spikes and implemented on the GPU for speed, since it needs to be performed once for each 2 sec batch. A fixed number of clusters is used, equal to half the total number of channels. The centroids of the clustering are used as templates.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Once the templates $\\mathbf{W}^{k}$ are obtained for each batch, we calculate a dissimilarity matrix $A_{i j}$ between each pair of batches, each with their own template sets $W^{i}$ , $\\dot{W}^{j}$ :",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\nA_{i j}=\\sum_{k}\\mathsf{m i n}_{l}\\|W_{k}^{i}-W_{l}^{j}\\|^{2}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1278 In other words, $A_{i j}$ is a metric which is small when\n1279 every template $k$ in a set of templates $W^{i}$ has a close\n1280 match in another set of templates $W^{j}$ . Pairs of batches\n1281 $i,j$ from similar drift levels will therefore have a small\n1282 dissimilarity, while batches taken at very drift levels will\n1283 have high dissimilarity because the templates won’t be\n1284 very well matched.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Once we compute the matrix A, all that is left is to find a permutation $\\uprho$ of the batches in which small dissimilarity values $A_{\\uprho(i)\\uprho(j)}$ are near the diagonal. The algorithm we use for this is a version of “rastermap”, a framework algorithm we have been developing for sorting high-dimensional data along a one-dimensional continuum. This particular version of rastermap matches the similarity matrix A to the matrix of distances in a one-dimensional space, where $x_{k}$ is a scalar value assigned to each batch $k$ and optimized",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1295 by the algorithm:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{r}{\\hat{x}=\\mathsf{a r g m i n}_{x}\\displaystyle\\sum_{i j}(A_{i j}-d_{i j}^{\\prime})^{2}}\\\\ {d_{i j}=-\\log(1+(x_{i}-x_{j})^{2})}\\\\ {d_{i j}^{\\prime}=d_{i j}-<d_{i j}>_{i j}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "where the $<\\cdot>$ operation signifies averaging. This cost function is initialized with $x_{k}$ based on the largest left singular vectors of A and minimized by gradient descent. We preprocess $\\mathbf{A}$ by z-scoring each row separately and symmetrize it by adding its transpose to it. In the optimization we ignore the mean of $d_{i j}$ over all $i,j$ , to avoid having to fit a constant offset term. Once the gradient descent optimization converges, we obtain a sorting of the batches by $\\mathsf{p}=\\mathsf{a r g s o r t}(\\mathbf{x})$ , where the argsort operation returns the index order of a vector.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "This ordering $\\uprho$ is used to perform online template learning and tracking. The template learning is performed by running the algorithm over one half of the data (typically the first half after reordering, from the middle of the $\\uprho$ range to the first batch and then back to the middle of the range). During this stage, the templates are being learnt: new templates can be introduced from the residuals of the reconstruction process, templates which are not used above a baseline spike rate are discarded, and merges and splits are also performed. See the next section for this template learning step. Once the template set is learned, the tracking is performed from the middle of the $\\uprho$ range to the first batch, and then from the middle of the $\\uprho$ range to the last batch. During the tracking phase, no new templates can be created or destroyed with any of the operations performed in the template learning phase. However, the template waveform itself continues to change in an online fashion as described above in the online template learning section.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Global optimization algorithms for clustering (Kilosort 2 / 2.5)",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Drift tracking was not the only new algorithm introduced in Kilosort2. We also added algorithmic steps designed to perform global optimization moves, in order to escape local minima which are very common in clustering algorithms. These global optimization moves were of three types: initialization, splitting a cluster and merging two clusters. We describe these in separate sections below. Some global optimization moves were also performed in Kilosort1 (simple splits and merges), but they were not as important there because the automated results of Kilosort1 underwent manual curation in Phy, and thus an oversplit cluster distribution was preferred because merges are",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha nted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "much easier than splits. For Kilosort2 however, the automated results of the algorithm became sufficiently good to be used in an automated manner, and thus it was important to avoid oversplit or overmerged clusters.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Template initialization from residual",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Initialization is one of the most important steps in a clustering algorithm. A common initialization for ${\\sf k}$ - means style algorithms is k-means $^{++}$ , which sequentially adds data points as cluster centroids if they are far enough away from centroids already chosen. We use a similar strategy in Kilosort2, with the added complication that spikes which are far from existing centroids would not even be detected by the online template matching step. In this case, such spikes must be detected in the residual of the model after reconstructing the data with the spikes found by template matching.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To perform these detections, we run a spike detector on the residual and pick a subset of those spikes as new templates to be introduced in the optimization. The spike detector was designed primarily to be fast, and to ensure that large amplitude spikes are not missed. It uses six single-channel prototype waveforms $w_{k},k=1,2,...,6$ . For each channel, we check the variance explained of all templates that extend over the nearest $n$ channels with $n\\leq7$ and have the same single-channel waveform on each channel, chosen from one of the six single-channel prototypes $w_{k}$ . This is a much simplified version of the spike detector introduced in Kilosort2.5, but a very fast version nonetheless. Similar to the Kilosort2.5 spike detector, this detector computes the maximum variance explained at each channel and each timepoint, that can be obtained using one of the 42 template combinations described above. Using this maximum variance matrix, we find peaks that are maxima across channels for each timepoint, and then we find the subset of those which are also maxima across time, and in a neighborhood of $\\pm4$ channels in a single batch. The reason for taking the maxima across time is to ensure that no spike from the same neuron is detected twice, because these spike detections are introduced as new putative templates.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "merged together if they have a high correlation $(>0.9)$ and if their means are similar $(<4\\sqrt{10}$ difference). If a merge is performed. the template with the smaller firing rate is simply dropped out of the active set.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Bimodality splits",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "New templates are introduced on every batch. The raw data snippets at the detected spikes are first smoothed with three principal components before being added to the set of active templates. The number of spikes detected by each template is monitored using an exponential filter with a decay scale of $\\sim20$ batches. Every five batches, templates are triaged and removed from the active set if their firing rate is below 0.02 spikes/s. During this step, templates are also",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Merges are relatively easy to perform, for example by checking all pairs of correlated templates and computing their cross-correlograms to find whether it is refractory (as described above for Kilosort4). Splits however are much more difficult, because finding a good split of a cluster in high-dimensional space is in itself a combinatorially difficult problem. In fact, the problem of finding good splits is not so different from the original problem of clustering the data, with the distinction that a split is a separation into only two, rather than many, clusters. Since we only need to divide the data into two clusters, we can take advantage of a common intuition that human operators have when performing splits: if a projection axis in the data exists which has a bimodal distribution, that is strong evidence that a split should be performed along that axis. This split can also be tested with respect to refractoriness of the CCG (like we check merges), and if the CCG is not refractory, then the split is typically performed.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1396\n1397\n1398\n1399\n1400\n1401\n1402\n1403\n1404\n1405\n1406\n1407\n1408\n1409\n1410\n1411\n1412\n1413\n1414\n1415\n1416\n1417\n1418\n1419\n1420\n1421\n1422\n1423\n1424\n1425\n1426\n1427\n1428\n1429\n1430\n1431\n1432\n1433\n1434\n1435",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "How could we find such splits automatically? Human curators typically find the splits in a GUI like Phy, by investigating multiple scatter plots of pairs of principal components from a few neighboring channels. Clearly this can be improved on, since the optimal split should include information from all channels and all principal components. In Kilosort2, we designed an algorithm called bimodal pursuit to find projection axes that are highly bimodal. The “pursuit” part is a reference to other pursuit-type algorithms like ICA (kurtosis/skewness pursuit), and refers to the iterative nature of the algorithm which sequentially increases the bimodality of a projection $w^{T}\\dot{\\mathbf{x}}$ , where $w$ is the unit-norm projection vector, and $\\mathbf{x}$ is the data to be split into two clusters.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Specifically, we find the projection $w$ which maximizes the following log-likelihood function:",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{r l r}{\\lefteqn{\\log\\mathcal{L}(w)=\\sum_{k}\\log p(x_{k})}}\\\\ &{}&{p(x_{k})=p_{1}\\mathcal{N}({w}^{t}x_{k};\\mu_{1},\\upsigma_{1})+p_{2}\\mathcal{N}({w}^{t}x_{k};\\mu_{2},\\upsigma_{2})}\\\\ &{}&{=p_{1}\\frac{e^{-\\frac{(w^{t}x_{k}-\\mu_{1})^{2}}{2\\sigma_{1}^{2}}}}{\\sqrt{2\\pi\\upsigma_{1}^{2}}}+p_{2}\\frac{e^{-\\frac{(w^{t}x_{k}-\\mu_{2})^{2}}{2\\sigma_{2}^{2}}}}{\\sqrt{2\\pi\\upsigma_{2}^{2}}},}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1436\n1437",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "where $x_{k}$ are the features of the $k$ -th spike, $\\mu_{j},\\sigma_{j}$ are the scalar mean and variances of one cluster $j$",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1438 out of the two total, $p_{j}$ is the prior probability of draw\n1439 ing a spike from that cluster with $p_{1}+p_{2}=1$ . This\n1440 function can be optimized via an EM-style algorithm\n1441 for mixtures of Gaussians, where we first infer the pos\n1442 terior distribution over cluster assignments, and then\n1443 we optimize the free energy function with respect to\n1444 $p_{j},\\mu_{j},\\sigma_{j}$ given $w$ and viceversa. The posterior dis\n1445 tribution over cluster assignments is given by the “re\n1446 sponsibilities” $r_{k j}=\\mathsf{P r o b}(y_{k}=j|\\boldsymbol{\\Theta})$ , where $y_{k}$ is the\n1447 true hidden label of data point $k$ and θ is the set of all\n1448 parameters.",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\nr_{k j}=p_{j}\\mathcal{N}(w^{t}x_{k};\\mu_{j},\\upsigma_{j})/p(x_{k})\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1449 and the free energy function takes the form",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{l}{\\displaystyle\\mathcal{F}(\\mathbf{r},\\boldsymbol{\\Theta})=\\sum_{k}\\sum_{j}r_{k j}\\log\\mathcal{K}(\\boldsymbol{w}^{t}\\boldsymbol{x}_{k};\\mu_{j},\\boldsymbol{\\upsigma}_{j})}\\\\ {\\displaystyle\\qquad=\\sum_{k,j}r_{k j}\\left(\\log(p_{j})-\\frac{({w}^{T}\\boldsymbol{x}_{k}-\\mu_{j})^{2}}{2{\\upsigma}_{j}^{2}}-\\frac{1}{2}\\pi{\\upsigma}_{j}^{2}\\right)}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1450 Holding $w$ fixed, we can maximize with respect to\n1451 $p_{j},\\mu_{j},\\sigma_{j}$ :",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{c}{{p_{j}^{\\mathsf{n e w}}=\\displaystyle\\sum_{k}r_{k j}/\\sum_{k,j}r_{k j}}}\\\\ {{\\displaystyle\\mu_{j}^{\\mathsf{n e w}}=\\sum_{k}r_{k,j}(w^{T}x_{k})/\\sum_{k}r_{k,j}}}\\\\ {{(\\upsigma_{j}^{\\mathsf{n e w}})^{2}=\\displaystyle\\sum_{k}r_{k,j}(w^{T}x_{k}-\\mu_{j}^{\\mathsf{n e w}})^{2}/\\sum_{k}r_{k,j}}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1452 Holding $p_{j},\\mu_{j},\\sigma_{j}$ fixed for all $j$ , we can maximize\n1453 with respect to $w$ :",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{c}{{w^{n e w}={\\cal C}^{-1}\\left(\\displaystyle\\sum_{k}x_{k}\\displaystyle\\sum_{j}\\displaystyle\\frac{r_{k j}}{2\\sigma_{j}^{2}}{\\mu}_{j}\\right)}}\\\\ {{{\\cal C}=\\displaystyle\\sum_{k}x_{k}x_{k}^{T}\\left(\\displaystyle\\sum_{j}\\displaystyle\\frac{r_{k j}}{2\\sigma_{j}^{2}}\\right)}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1454 $w$ is re-normalized to unit norm on every iteration.\n1455 The algorithm is initialized with $w$ being either the top\n1456 principal component of $\\mathbf{x}$ , or its normalized mean. In\n1457 Kilosort 2 and 2.5, we run the algorithm twice, first ini\n1458 tialized with the top principal component, and then ini\n1459 tialized with the mean. The EM algorithm is run for\n1460 50 iterations, but $w$ is only updated after iteration 10,\n1461 and on odd iterations only, in order to make the opti\n1462 mization faster. We assign each spike $k$ to the clus\n1463 ter $y_{k}$ with highest posterior probability $r_{y_{k}k}$ . We also",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "compute a measure of the certainty in assigning $y_{k}$ as: q j =< r jk >yk= j. If q j is very close to 1, it means all spikes in cluster $j$ are assigned with nearly maximum confidence. If it is close to its lower boundary of 0.5, it means there is almost no difference between the means and variances $\\mu_{j},\\pmb{\\sigma}_{j}$ of the two Gaussians in the mixture. To perform a split, we require that $\\operatorname*{min}(q_{1},q_{2})>0.9$ . In addition, we require that the resulting clusters have templates that are sufficiently distinct (correlation $<0.9$ or norms $n_{1},n_{2}$ that are sufficiently different: $\\|n_{1}-n_{2}\\|/(n_{1}+n_{2})>0.1)$ . We also require that the smallest cluster in the split should have at least 300 spikes, and that the cross-correlogram between resulting clusters is not refractory, using similar criteria to those described above for Kilosort4.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Splits are performed by traversing the list of clusters in consecutive order across channels. Once a split is found, we also check the subclusters for potential splits. We do this by appending the smallest sub-cluster to the end of the list, and testing the large cluster for splits again. This process continues until no more good splits are found, and then the process moves to the next cluster in the list.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Merges are also performed at the end in all versions of Kilosort starting with Kilosort2, and they take the some form as the global merges described above in the Kilosort4 section.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Recursive pursuit (Kilosort3)",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "In Kilosort3, we realized that the cost function above has some major weaknesses, such as the lack of scale invariance which means that projections with small amounts of variance have undesirably large values of $\\log\\mathcal{L}(\\boldsymbol{w})$ . Nonetheless, in practice the maximization of $\\log\\mathcal{L}(\\boldsymbol{w})$ does indeed find projections with substantial bimodality, which is perhaps a consequence of good initialization and local minima. In Kilosort3, we made some appropriate modifications to the cost function as well as to the initialization to further improve its performance. The improved bimodal pursuit algorithm was able to find surprisingly good splits, even when given a mixture of more than two clusters. We took advantage of its performance and designed a new clustering algorithm in Kilosort3 which performs clustering by recursively splitting off clusters from the main distribution using the bimodal pursuit algorithm.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Improved bimodal pursuit",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The idea of “projection pursuit” comes from the field of independent components analysis (ICA) and similar algorithms, and it was perhaps popularized the most by the fast ICA algorithm from Hyvarinnen and colleagues [39]. Like our cost function, projection pursuit maximizes some criterion computed over the distribu",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1516 tion of projections $w^{T}x$ . Unlike our function, this cri\n1517 terion is usually scale-invariant, such as the kurtosis\n1518 or skewness criteria which are normalized by the vari\n1519 ance of the data. A simple way to make our criterion\n1520 scale-invariant is whitening or “sphering”, which is also\n1521 a very common preprocessing step for ICA. Whitening\n1522 normalizes a multi-dimensional dataset $\\mathbf{x}$ into $\\tilde{\\mathbf{x}}=A\\mathbf{x}$ ,\n1523 where $A$ is an appropriate whitening matrix, so that the\n1524 mean of each dimension is 0, and the covariance of\n1525 the normalized data is the identity. As a consequence,\n1526 any projection $w^{T}\\tilde{\\mathbf{x}}$ is standardized, in other words it\n1527 has mean 0 and variance 1. A common choice of\n1528 whitening is PCA / SVD, and this is also our approach.\n1529 In Kilosort3, we perform whitening on every matrix\n1530 x before running the bimodal pursuit algorithm. In this\n1531 case, the log-likelihood criterion can be interpreted as\n1532 searching for the projection $w$ which can be best mod\n1533 elled by a mixture of Gaussians after z-scoring. Of all\n534 distributions with mean 0 and variance 1, the criterion\n1535 $L(w)$ is now maximized by the sum of discrete distri\n1536 butions centered on $^{-1}$ and $+1$ . In addition, we con\n1537 strain $\\pmb{\\upsigma}_{1}=\\pmb{\\upsigma}_{2}=\\pmb{\\upsigma}$ , which allows to perform the matrix\n1538 inversion $C^{-1}$ only once, because",
+        "page_idx": 0
+    },
+    {
+        "type": "equation",
+        "text": "$$\n\\begin{array}{l}{{\\displaystyle C=\\frac{1}{\\sigma}\\sum_{k}x_{k}x_{k}^{T}\\sum_{j}r_{k j}}}\\\\ {{\\displaystyle~=\\frac{1}{\\sigma}\\sum_{k}x_{k}x_{k}^{T}}}\\\\ {{\\displaystyle~=\\frac{1}{\\sigma}N}}\\end{array}\n$$",
+        "text_format": "latex",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Recursive pursuit",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "The bimodal pursuit algorithm described above takes as input a set of spike features, and outputs a partition into two clusters. Applied recursively, the algorithm can find a subset of a dataset that is well isolated from other clusters and cannot be split further into more clusters. We start will all spikes detected on a set of channels, and find the first split. Of the two pieces, we take the piece with higher average waveform amplitude, and we split it again. This process continues until no more splits can be found. Splits can be veto-ed in similar ways to Kilosort 2/2.5, except that the index of bimodality is used instead of the “measure of certainty” described above. A split requires all three criteria to be satisfied: high bimodality index, low waveform correlation and non-refractory CCG. In Kilosort4, we use the same criteria minus the criterion for low waveform correlation which is somewhat redundant with the bimodality index criterion.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "because $\\begin{array}{r}{\\sum_{j}r_{k j}=1}\\end{array}$ by construction and $\\begin{array}{r}{\\sum_{k}x_{k}x_{k}^{T}}\\end{array}$ due to whitening, where $N$ is the total number of spikes.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1541 We also introduce a new form of initialization. Since\n1542 the algorithm is highly sensitive to initialization, we run\n1543 a brute force search for a good initialization vector $w$ .\n1544 Remembering that we are in normalized PCA space,\n1545 the brute force approach checks all vectors $w$ with\n1546 $w_{d}\\in\\{-1/n,1/n\\}$ for $d=1,...,6$ and $w_{d}=0,d>6$ ,\n1547 with $n$ being a normalization constant, in this case $\\sqrt{6}$ .\n1548 For each of the resulting 64 combinations, we check\n1549 the bimodality of the projection $w^{T}\\mathbf{x}$ by performing a\n1550 histogram and using similar criteria to those described\n1551 above for Kilosort4. This histogram based algorithm is\n1552 also used in the first 25 iterations of bimodal pursuit as\n1553 a replacement for the EM assignments for ${\\upmu,\\upsigma,p}$ . This\n1554 is done by computing the mean, variance and fraction\n1555 of all points $w^{T}\\dot{x}_{k}$ smaller/bigger than the trough of the\n1556 distribution respectively. We found this initial approxi\n1557 mation of the EM assignments to be more robust, es\n1558 pecially in cases where one cluster has substantially\n1559 more spikes than the other.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Once a cluster is found out of the dataset, the spikes corresponding to that cluster are removed, and the cluster finding process is applied to the remaining spikes. This process continued until the remaining spikes can no longer be split, and thus they constitute the final cluster. Note that the complete algorithm contains two recursive loops: one loop for finding a single cluster out of the dataset, and another loop for finding all clusters in the dataset. This clustering operation is applied to spikes detected in $40~{\\upmu\\mathrm{m}}$ segments of the probe, similar to the process described for Kilosort4.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Benchmarking",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "1590\n1591\n1592\n1593\n1594\n1595\n1596\n1597\n1598\n1599\n1600\n1601\n1602\n1603\n1604",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "To determine the performance of various spike-sorting algorithms, we created realistic simulations using the properties of 512 electrophysiological recordings from the International Brain Laboratory (IBL) performed using Neuropixels 1.0 probes [15, 40]. These recordings were processed by the IBL using pyKilosort. The simulation generation was over two times faster than realtime (e.g. a 45 minute simulation took around 20 minutes to generate), which enabled us to create several simulations for benchmarking. The simulations, other than “step drift, aligned”, used the site configuration of the Neuropixels 1.0 probes, which have a vertical spacing of $20~{\\upmu\\mathrm{m}}$ , a horizontal spacing of $32\\upmu\\mathrm{m}$ and a horizontal offset across rows of $16\\upmu\\mathrm{m}$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Drift simulation",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "pyKilosort, like other Kilosort versions, returns the estimated depth for each processing batch at nine equallyspaced positions along the $3.84~\\mathsf{m m}$ probe. The processing batch size for all IBL recordings was 65,536 timepoints. We quantified the drift range for each recording by first taking the median of the depth across",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "the nine positions, then computing difference between the $5^{\\mathrm{th}}$ and $95^{\\mathrm{th}}$ percentile of the drift. We used the properties of the drift across these recordings to create simulated drift (see drift examples in Figure S3).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "For the simulations, we generated a drift trace of length 45 minutes at each of the positions, then upsampled the drift to all 384 channels using linear in\n1619 terpolation. The drift was the same across a period of 2 seconds for all simulations, other than the fast drift simulation which varied in periods of 200 ms. Here are\n1622 the details of the generation of each drift simulation:",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1620\n1621\n1623 • no drift : Zero drift at all nine positions.\n1624 • medium drift: The overall drift was generated as ran\n1625 dom gaussian noise smoothed in time with a gaus\n1626 sian filter of $\\scriptstyle\\sigma=100$ sec. Drift at each of the nine\n1627 positions was generated as random gaussian noise\n1628 smoothed in time with a gaussian filter of standard\n1629 deviation 100 seconds and smoothed across the po\n1630 sitions with a gaussian filter with $\\scriptstyle{\\sigma=2}$ . This per\n1631 position drift was rescaled by a factor of 0.4 and\n1632 added to the overall drift, then the drift across posi\n1633 tions and time was rescaled such that the minimum\n1634 and maximum values were $-7\\upmu\\mathrm{m}$ and $7~{\\upmu\\mathrm{m}}$ . This\n1635 resulted in a simulation with a drift range of $9.4~\\upmu$ .\n1636 • high drift : The overall drift and per-position drift were\n1637 generated in the same way as the medium drift. The\n1638 per-position drift was next rescaled by a factor of\n1639 0.26 and added to the overall drift, then the drift\n1640 across positions and time was rescaled such that\n1641 the minimum and maximum values were - $-18.5\\ \\upmu\\mathrm{m}$\n1642 and $18.5~{\\upmu\\mathrm{m}}$ . This resulted in a simulation with a\n1643 drift range of $27.9\\upmu\\mathrm{m}$ .\n1644 • fast drift : A medium drift simulation was used for the\n1645 slow drift across positions and time (generated in\n1646 bins of two seconds, then upsampled to 200 ms bins\n1647 with nearest neighbor interpolation). Then fast drift\n1648 events were generated with an amplitude of $10~{\\upmu\\mathrm{m}}$\n1649 and a difference of exponentials kernel with a rise\n1650 time of 80 ms and a decay time of 200 ms. 300 of\n1651 these fast drift events were added to the upsampled\n1652 medium drift simulation at random times.\n1653 • step drift : The overall drift and per-position drift were\n1654 generated in the same way as the medium drift. The\n1655 per-position drift was next rescaled by a factor of\n1656 0.58 and added to the overall drift, then the drift\n1657 across positions and time was rescaled such that\n1658 the minimum and maximum values were $-4\\upmu\\mathrm{m}$ and\n1659 $4\\ \\upmu\\mathrm{m}$ . Halfway through the recording $30~{\\upmu\\mathrm{m}}$ was\n1660 added to all the drifts across positions.\n1661 • step drift, aligned: Same exact drift as step drift,\n1662 but waveforms were upsampled using aligned probe\n1663 sites with a vertical separation of $20\\upmu\\mathrm{m}$ and a hori\n1664 zontal separation of $32\\upmu\\mathrm{m}$ .",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Extraction of waveforms at multiple depths",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Obtaining waveforms across many depths requires recordings with substantial drift. In the IBL dataset we found 11 such recordings with high drift that wellsampled a range of $40~{\\upmu\\mathrm{m}}$ in depth. We used the estimated spike times from pyKilosort for each detected unit in these recordings, and the estimated depth of the probe to compute the average waveform for the unit at specified depth positions. We used 20 depth bins each of size $2\\upmu\\mathrm{m}$ , resulting in average waveforms across 40 $\\upmu\\mathrm{m}$ . To ensure the quality of the waveforms, we did not use any units which had fewer than 50 spikes at each depth.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The waveforms were denoised by reconstructing each waveform across depths with only its top three principal components. The waveforms were then normalized by the average norm of the waveform across depths. We then threw out waveforms which varied substantially from $-20\\ \\upmu\\mathrm{m}$ to $20~{\\upmu\\mathrm{m}}$ in depth, since these waveforms’ shape changes are likely caused by other processes besides drift. To quantify the variation across depth we computed the Euclidean distance across channels and timepoints between the waveform at $-20\\upmu\\mathrm{m}$ and the waveform at $20\\upmu\\mathrm{m}$ shifted up by 4 channels (a distance of $40\\ \\upmu\\mathrm{m})$ . We removed units with variation greater than 0.25 $(\\sim25\\%$ of units), resulting in a waveform bank of 597 units from the 11 recordings.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1668\n1669\n1670\n1671\n1672\n1673\n1674\n1675\n1676\n1677\n1678\n1679\n1680\n1681\n1682\n1683\n1684\n1685\n1686\n1687\n1688\n1689\n1690\n1691\n1692\n1693\n1694\n1695\n1696\n1697\n1698\n1699\n1700\n1701\n1702\n1703\n1704\n1705\n1706\n1707\n1708\n1709\n1710\n1711\n1712\n1713\n1714\n1715\n1716\n1717\n1718",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Next we needed the waveform shapes at a finer scale than $2\\upmu\\mathrm{m}$ . For this, we upsampled the waveforms by a factor of 100 using kriging interpolation [9] with a regularization coefficient of 0.01 and a gaussian of standard deviation $20\\upmu\\mathrm{m}$ . For the step drift with aligned site simulation, the upsampled waveforms were interpolated using a probe with sites aligned vertically. Then the waveforms were again normalized by the average norm of the waveform across depths. We next divided these waveforms into two groups according to the contamination rates from their units’ estimated spike trains [41]: a contamination rate less than 0.1 were used to generate “single-units”, while those with a contamination rate greater than 0.1 were used to generate “multi-units”.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The units from these recordings exhibited waveform changes across depth, see example waveforms in Figure 3c and Figure S2a. All waveforms moved down the probe as the depth changes, but some waveforms also changed their shape (example units 2 and 4, which had smaller spatial footprints). This shape change could not be inferred by other channels. We demonstrated this by using the same Kriging interpolation procedure as above in order to estimate the $0~{\\upmu\\mathrm{m}}$ depth waveform from the waveforms at other depths (Figure S2b). The waveform at $0~{\\upmu\\mathrm{m}}$ depth was well",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a l icense to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "19 estimated for units 1 and 3 but not for 2 and 4. This\n20 exemplifies the need for real recordings to create ac\n21 curate simulations of waveform shapes.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "We quantified the performance of the spike-sorting algorithms as a function of the spatial extent of the waveforms of the ground truth unit (Figure S5c,f). We defined the spatial extent of the waveform as the spatial scale across channels over which the waveform shape is maintained (using the $0\\upmu\\mathrm{m}$ depth waveform). To compute this we first matched the waveform with its most similar waveform from the universal templates as defined by cosine similarity. We then projected the waveform onto this best template waveform and thresholded it, to obtain a template weight for each channel. We next computed the weighted mean of the distance from each channel to the center-of-mass of the waveform as defined by the template weights, and termed this the spatial extent.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1737 Simulation of spikes",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "We simulated 600 “single-units” and 600 “multi-units” by randomly drawing waveforms from these two classes. These waveforms were randomly placed on the probe at positions from site 4 to site 380. To create the correct waveform shapes, the waveform’s best channel modulo 4 was computed and maintained in the simulation (because the probe site arrangement repeats every 4 sites).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "We used the inter-spike intervals from detected units in the 11 recordings which had a contamination rate of less than 0.1, this was 1497 units in total. The average firing rate of these units was $12.6~\\mathsf{H z}$ . Each simulated spike train for a “single-unit” was then generated by randomly shuffling the inter-spike intervals of one of the detected units. For the spike trains of “multi-units” we generated Poisson spike trains with firing rates drawn randomly from these units’ firing rates.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The amplitudes for the “single-units” were generated by adding a constant, 10, to a random exponential with a mean of 7, which approximated the distribution from units detected in the data. The amplitudes for the “multi-units” were generated from a uniform random distribution with a range from 4 to 10. The waveform across depth for each unit was then multiplied by its amplitude. We quantified the performance of the spike-sorting algorithms as a function of the amplitude (norm) of the ground truth unit (Figure S5b,e).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "We then added one-by-one the spike train of each simulated unit to the simulation, using the simulated drift at each timepoint to determine which depth of the waveform to add for each spike. Collisions could occur in the spike trains, so we added the spike train in 3 interleaved parts to ensure correct reconstruction while still maintaining the speed of simulation generation.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "All simulations used different waveforms, spike trains, and amplitudes, except for the two step drift simulations, in which all parameters were kept fixed to determine the effect of probe site configuration. These two step drift simulations therefore only differed in their exact waveform shapes across depths due to the difference in the probe site positions.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Simulation noise and “unwhitening”",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "To each channel in the simulation we added random noise with a flat frequency spectrum in time, up to 300 Hz. This noise was scaled to have a standard deviation of 0.76. Next the simulation was “unwhitened”: the simulation was multiplied by the inverse of a whitening matrix estimated from one of the 11 recordings used. Different whitening matrices were used for each simulation, except for the two step drift simulations, where it was the same matrix for both. Finally, to save the simulation as int16, the simulation was multiplied by 200, cut-off at $\\pm32767$ and converted to int16. For each simulation we saved a corresponding “.meta” file, which SpikeInterface expects for processing IMEC Neuopixels probe recordings. For the aligned site probe, we added a probe type to the spike GLX loader in SpikeInterface.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Performance metrics",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "Each ground truth unit was compared to the 20 closest detected units from the algorithm, where closeness was defined by the distance between the ground truth and detected units best channels. If an estimated spike from a detected unit was less than or equal to 0.1 ms from a ground truth spike, it was counted as a positive match. The false positive rate (FP) was defined as the number of estimated spikes without a positive match divided by the total number of estimated spikes, which is equivalent to 1 precision. The false negative rate (FN) was defined as the number of missed ground truth spikes divided by the total number of ground truth spikes, which is equivalent to 1 recall. We matched the ground truth unit with the detected unit that maximized the score, defined as $1-F P-F N$ [6]. The upper bound of the score is 1. In Figure 3e-j, the ground truth units were sorted by their score from each algorithm separately. We defined ground truth units as being correctly identified in Table 2 if the score was higher than 0.8.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Spike-sorting algorithm parameters",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "We ran Kilosort 1, 2, 2.5 & 3, IronClust, MountainSort4, SpyKING CIRCUS, SpyKING CIRCUS 2, HDSort, Herding Spikes, and Tridesclous2 on all simulations using the SpikeInterface platform to ensure that all spike-sorting algorithms were run in the same",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "way. For Kilosort 1, 2, 2.5 and 3, we set the detection thresholds to [9, 8] instead of their defaults which varied across verrsions. Also, to speed up Kilosort 1, we set the number of passes through the data to 2 instead of 6 (this did not reduce performance).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "For the other top performing algorithms (IronClust, MountainSort4, and SpyKING CIRCUS), we ran a parameter sweep over the detection threshold and used the detection threshold which maximized the number of correctly identified units on the medium drift simulation. For MountainSort4 and IronClust, the best detection threshold was the default detection threshold; for SpyKING CIRCUS, this was a detection threshold of 4.5. For SpyKING CIRCUS 2, we noticed poor detection of low amplitude units (Figure S5b,e) and thus also swept over the detection threshold for this algorithm, but did not achieve an improvement in performance. For IronClust the default adjacency radius is 50, while for MountainSort4 the default is set to all channels. This large radius led to an incredibly long run time (10s of hours), and thus we set the MountainSort4 adjacency radius to 50 as well.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "All other parameters were set to their default values.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Comparison to other benchmarking approaches",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "1847 Here we compare our approach to previous spike\n1848 sorting benchmarking performed in the literature. The\n1849 first approach is to use datasets where the ground\n1850 truth spiking of a single unit is known. These datasets\n1851 are acquired by performing cell-attached recordings\n1852 while simultaneously recording with a probe. Then\n1853 spike-sorting is performed on the probe and compared\n1854 to the ground-truth spiking to determine spike-sorting\n1855 performance. Since these are very difficult experi\n1856 ments, existing ground-truth datasets were acquired\n1857 in anesthetized animals and are very short [2, 42–48].\n1858 This makes these datasets much easier to spike sort\n1859 compared to long, realistic awake recordings with drift\n1860 and with relatively more neuronal firing. Further, such\n1861 cell-attached recordings are biased towards larger\n1862 and higher firing units, and less likely to be successful\n1863 on smaller amplitude units. When SpikeForest used\n1864 these ground-truth datasets to compare various spike\n1865 sorting algorithms (”PAIRED” recordings, https:\n1866 //spikeforest.flatironinstitute.org/) [49],\n1867 they found that IronClust, Kilosort2 and SpyKING\n1868 CIRCUS performed similarly on these recordings.\n1869 This is consistent with our own benchmarking results\n1870 on the ”no drift” recordings, where many of the\n1871 spike-sorting algorithms recovered units with high\n1872 amplitudes equally well (Figure S5b,e). However,\n1873 most recordings in awake animals have drift and\n1874 contain many low amplitude units that can be isolated\n1875 by Kilosort.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "Another approach is to create so-called “hybrid ground-truth datasets”. Either ground-truth units, as acquired above, or manually curated units are used [6, 8, 49]. These units can be inserted into other real recordings, or the same recording in a different position after being subtracted off, to ensure appropriate background noise. Multiple ground truth units can be inserted in a dataset in this fashion. However, these hybrid datasets depend on finding the neurons in the first place and they also depend on correcting for the initial drift of the dataset. Alternatively, these groundtruth units can be used to create simulations with drift, in which the units are moved up and down the probe at some rate over time, then background noise is added [46, 50]. These simulations do have drift but they have drawbacks: 1) waveform changes across depths cannot occur, but they do in the real data, as demonstrated in Figure S2a,b, and 2) the background noise is only simple gaussian noise with the same frequency spectrum as the real data. To remedy (1), we obtained waveforms at various drift positions from real recordings, as outlined above, to simulate the waveforms at various depth positions. To remedy (2), we added 600 “multi-units” with low amplitudes to the simulation to create more realistic background, on top of adding gaussian noise with a matched frequency spectrum (Figure S2c).",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "The final approach is to instead simulate waveforms, either using some specified properties [3], or using the electrical field of a biophysically simulated neuron [51–54]. These simulators do not produce waveforms as diverse as real neurons from recordings, likely because we lack a full understanding of how the tissue geometry interacts with action potentials and the probe to create all the diverse spike shapes that can be observed. Various types of noise and background can be added to these neurons. For example these simulated neurons can be added to background signal from other recordings [3]. Alternatively noise can be added by simulating neurons further away from the probe [53]. Other simulators use spatially correlated noise with parameters extracted from the data [51, 54]. The MEAREC simulator includes the option for probe drift; however it is unclear how much the waveform shape changes over drift positions in their simulations, as this depends on the geometry of the electrical fields.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "References",
+        "page_idx": 0,
+        "text_level": 1
+    },
+    {
+        "type": "text",
+        "text": "[1] James J Jun, Catalin Mitelut, Chongxi Lai, Sergey L Gratiy, Costas A Anastassiou, and Timothy D Harris. Real-time spike sorting platform for high-density extracellular probes with groundtruth validation and drift correction. BioRxiv, page 101030, 2017.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha anted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "1929 [2] Pierre Yger, Giulia LB Spampinato, Elric Es\n1930 posito, Baptiste Lefebvre, St´ephane Deny,\n1931 Christophe Gardella, Marcel Stimberg, Florian\n1932 Jetter, Guenther Zeck, Serge Picaud, et al. A\n1933 spike sorting toolbox for up to thousands of elec\n1934 trodes validated with ground truth recordings in\n1935 vitro and in vivo. Elife, 7:e34518, 2018.\n1936 [3] Jason E Chung, Jeremy F Magland, Alex H Bar\n1937 nett, Vanessa M Tolosa, Angela C Tooker, Kye Y\n1938 Lee, Kedar G Shah, Sarah H Felix, Loren M\n1939 Frank, and Leslie F Greengard. A fully automated\n1940 approach to spike sorting. Neuron, 95(6):1381–\n1941 1394, 2017.\n1942 [4] Alex Rodriguez and Alessandro Laio. Clustering\n1943 by fast search and find of density peaks. science,\n1944 344(6191):1492–1496, 2014.\n1945 [5] Jeremy F Magland and Alex H Barnett. Uni\n1946 modal clustering using isotonic regression: Iso\n1947 split. arXiv preprint arXiv:1508.04841, 2015.\n1948 [6] Marius Pachitariu, Nicholas Steinmetz, Shabnam\n1949 Kadir, Matteo Carandini, and Kenneth D. Har\n1950 ris. Kilosort: realtime spike-sorting for extracellu\n1951 lar electrophysiology with hundreds of channels.\n1952 bioRxiv, 2016.\n1953 [7] Samuel Garcia, Alessio P. Buccino, and Pierre\n1954 Yger. How do spike collisions affect spike sort\n1955 ing performance? eNeuro, 9(5), 2022.\n1956 [8] Cyrille Rossant, Shabnam N Kadir, Dan FM\n1957 Goodman, John Schulman, Maximilian LD\n1958 Hunter, Aman B Saleem, Andres Grosmark, Mar\n1959 iano Belluscio, George H Denfield, Alexander S\n1960 Ecker, et al. Spike sorting for large, dense elec\n1961 trode arrays. Nature neuroscience, 19(4):634–\n1962 641, 2016.\n1963 [9] Nicholas A Steinmetz, Cagatay Aydin, Anna\n1964 Lebedeva, Michael Okun, Marius Pachitariu, Mar\n1965 ius Bauza, Maxime Beau, Jai Bhagat, Clau\n1966 dia Bo¨hm, Martijn Broux, et al. Neuropix\n1967 els 2.0: A miniaturized high-density probe for\n1968 stable, long-term brain recordings. Science,\n1969 372(6539):eabf4588, 2021.\n1970 [10] Guido Van Rossum and Fred L Drake Jr. Python\n1971 reference manual. Centrum voor Wiskunde en\n1972 Informatica Amsterdam, 1995.\n1973 [11] Adam Paszke, Sam Gross, Francisco Massa,\n1974 Adam Lerer, James Bradbury, Gregory Chanan,\n1975 Trevor Killeen, Zeming Lin, Natalia Gimelshein,\n1976 Luca Antiga, Alban Desmaison, Andreas Kopf,\n1977 Edward Yang, Zachary DeVito, Martin Raison,\n1978 Alykhan Tejani, Sasank Chilamkurthy, Benoit\n1979 Steiner, Lu Fang, Junjie Bai, and Soumith\n1980 Chintala. Pytorch: An imperative style, high\n1981 performance deep learning library. In Advances\n1982\n1983\n1984\n1985\n1986\n1987\n1988\n1989\n1990\n1991\n1992\n1993\n1994\n1995\n1996\n1997\n1998\n1999\n2000\n2001\n2002\n2003\n2004\n2005\n2006\n2007\n2008\n2009\n2010\n2011\n2012\n2013\n2014\n2015\n2016\n2017\n2018\n2019\n2020\n2021\n2022\n2023\n2024\n2025\n2026\n2027\n2028\n2029\n2030\n2031\n2032\n2033\n2034",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "in Neural Information Processing Systems 32, pages 8024–8035. Curran Associates, Inc., 2019.\n[12] Luke Campagnola. Scientific graphics and gui library for python. https://github.com/ pyqtgraph/pyqtgraph, 2020.\n[13] Nick Steinmetz, Matteo Carandini, and Kenneth D. Harris. ”Single Phase3” and ”Dual Phase3” Neuropixels Datasets. 3 2019.\n[14] David Arthur and Sergei Vassilvitskii. k-means $^{++}$ : The advantages of careful seeding. Technical report, Stanford, 2006.\n[15] International Brain Laboratory , Kush Banga, Julius Benson, Niccol`o Bonacchi, Sebastian A Bruijns, Rob Campbell, Gae¨lle A Chapuis, Anne K Churchland, M Felicia Davatolhagh, Hyun Dong Lee, Mayo Faulkner, Fei Hu, Julia Hunterberg, Anup Khanal, Christopher Krasniak, Guido T Meijer, Nathaniel J Miska, Zeinab Mohammadi, Jean-Paul Noel, Liam Paninski, Alejandro Pan-Vazquez, Noam Roth, Michael Schartner, Karolina Socha, Nicholas A Steinmetz, Karel Svoboda, Marsa Taheri, Anne E Urai, Miles Wells, Steven J West, Matthew R Whiteway, Olivier Winter, and Ilana B Witten. Reproducibility of invivo electrophysiological measurements in mice. bioRxiv, 2022.\n[16] Mark EJ Newman and Michelle Girvan. Finding and evaluating community structure in networks. Physical review E, 69(2):026113, 2004.\n[17] Vincent A Traag, Ludo Waltman, and Nees Jan Van Eck. From louvain to leiden: guaranteeing well-connected communities. Scientific reports, 9(1):1–12, 2019.\n[18] Vincent D Blondel, Jean-Loup Guillaume, Renaud Lambiotte, and Etienne Lefebvre. Fast unfolding of communities in large networks. Journal of statistical mechanics: theory and experiment, 2008(10):P10008, 2008.\n[19] Jeremy F Magland and James J Jun. Ironclust: Spike sorting software being developed at flatiron institute, based on jrclust (janelia rocket cluster). https://github.com/ flatironinstitute/ironclust, 2021.\n[20] Pierre Yger, Samuel Garcia, and Alessio Paolo Buccino. spykingcircus2. https://github. com/SpikeInterface/spikeinterface/ blob/master/spikeinterface/sorters/si_ based_sorters/spyking_circus2.py, 2022.\n[21] Roland Diggelmann, Michele Fiscella, Andreas Hierlemann, and Felix Franke. Automatic spike sorting for high-density microelectrode arrays. Journal of neurophysiology, 120(6):3155–3171, 2018.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who anted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "2035 [22] Gerrit Hilgen, Martino Sorbaro, Sahar Pir\n2036 moradian, Jens-Oliver Muthmann, Ibolya Edit\n2037 Kepiro, Simona Ullo, Cesar Juarez Ramirez, Al\n2038 bert Puente Encinas, Alessandro Maccione, Luca\n2039 Berdondini, et al. Unsupervised spike sorting for\n2040 large-scale, high-density multielectrode arrays.\n2041 Cell reports, 18(10):2521–2532, 2017.\n2042 [23] Samuel Garcia and Alessio Paolo Buc\n2043 cino. tridesclous2. https://github.com/\n2044 SpikeInterface/spikeinterface/blob/\n2045 master/spikeinterface/sorters/si_\n2046 based_sorters/tridesclous2.py, 2022.\n2047 [24] Alessio Paolo Buccino, Cole Lincoln Hurwitz,\n2048 Samuel Garcia, Jeremy Magland, Joshua H\n2049 Siegle, Roger Hurwitz, and Matthias H Hennig.\n2050 Spikeinterface, a unified framework for spike sort\n2051 ing. Elife, 9:e61834, 2020.\n2052 [25] Akshay Markanday, Joachim Bellet, Marie E Bel\n2053 let, Junya Inoue, Ziad M Hafed, and Peter Thier.\n2054 Using deep neural networks to detect complex\n2055 spikes of cerebellar purkinje cells. Journal of neu\n2056 rophysiology, 123(6):2217–2234, 2020.\n2057 [26] Fabian Pedregosa, Ga¨el Varoquaux, Alexan\n2058 dre Gramfort, Vincent Michel, Bertrand Thirion,\n2059 Olivier Grisel, Mathieu Blondel, Peter Pretten\n2060 hofer, Ron Weiss, Vincent Dubourg, et al. Scikit\n2061 learn: Machine learning in python. Journal of\n2062 machine learning research, 12(Oct):2825–2830,\n2063 2011.\n2064 [27] Jeff Johnson, Matthijs Douze, and Herve´ J´egou.\n2065 Billion-scale similarity search with GPUs. IEEE\n2066 Transactions on Big Data, 7(3):535–547, 2019.\n2067 [28] Charles R. Harris, K. Jarrod Millman, St´efan J.\n2068 van der Walt, Ralf Gommers, Pauli Virtanen,\n2069 David Cournapeau, Eric Wieser, Julian Tay\n2070 lor, Sebastian Berg, Nathaniel J. Smith, Robert\n2071 Kern, Matti Picus, Stephan Hoyer, Marten H.\n2072 van Kerkwijk, Matthew Brett, Allan Haldane,\n2073 Jaime Fern´andez del R´ıo, Mark Wiebe, Pearu\n2074 Peterson, Pierre Ge´rard-Marchant, Kevin Shep\n2075 pard, Tyler Reddy, Warren Weckesser, Hameer\n2076 Abbasi, Christoph Gohlke, and Travis E. Oliphant.\n2077 Array programming with NumPy. Nature,\n2078 585(7825):357–362, September 2020.\n2079 [29] Pauli Virtanen, Ralf Gommers, Travis E. Oliphant,\n2080 Matt Haberland, Tyler Reddy, David Courna\n2081 peau, Evgeni Burovski, Pearu Peterson, Warren\n2082 Weckesser, Jonathan Bright, St´efan J. van der\n2083 Walt, Matthew Brett, Joshua Wilson, K. Jarrod\n2084 Millman, Nikolay Mayorov, Andrew R. J. Nelson,\n2085 Eric Jones, Robert Kern, Eric Larson, C J Carey,\n2086 ˙Ilhan Polat, Yu Feng, Eric W. Moore, Jake Vander\n2087 Plas, Denis Laxalde, Josef Perktold, Robert Cim\n2088\n2089\n2090\n2091\n2092\n2093\n2094\n2095\n2096\n2097\n2098\n2099\n2100\n2101\n2102\n2103\n2104\n2105\n2106\n2107\n2108\n2109\n2110\n2111\n2112\n2113\n2114\n2115\n2116\n2117\n2118\n2119\n2120\n2121\n2122\n2123\n2124\n2125\n2126\n2127\n2128\n2129\n2130\n2131\n2132\n2133\n2134\n2135\n2136\n2137\n2138",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "rman, Ian Henriksen, E. A. Quintero, Charles R. Harris, Anne M. Archibald, Antoˆnio H. Ribeiro, Fabian Pedregosa, Paul van Mulbregt, and SciPy 1.0 Contributors. SciPy 1.0: Fundamental Algorithms for Scientific Computing in Python. Nature Methods, 17:261–272, 2020.\n[30] Siu Kwan Lam, Antoine Pitrou, and Stanley Seibert. Numba: A llvm-based python jit compiler. In Proceedings of the Second Workshop on the LLVM Compiler Infrastructure in HPC, pages 1– 6, 2015.\n[31] Casper da Costa-Luis, Stephen Karl Larroque, Kyle Altendorf, Hadrien Mary, richardsheridan, Mikhail Korobov, Noam Raphael, Ivan Ivanov, Marcel Bargull, Nishant Rodrigues, and et al. tqdm: A fast, extensible progress bar for python and cli. Apr 2022.\n[32] G. Bradski. The OpenCV Library. Dr. Dobb’s Journal of Software Tools, 2000.\n[33] PyQT. Pyqt reference guide. 2012.\n[34] John D Hunter. Matplotlib: A 2d graphics environment. Computing in science & engineering, 9(3):90, 2007.\n[35] Thomas Kluyver, Benjamin Ragan-Kelley, Fernando Pe´rez, Brian E Granger, Matthias Bussonnier, Jonathan Frederic, Kyle Kelley, Jessica B Hamrick, Jason Grout, Sylvain Corlay, et al. Jupyter notebooks-a publishing format for reproducible computational workflows. In ELPUB, pages 87–90, 2016.\n[36] Agnan Kessy, Alex Lewin, and Korbinian Strimmer. Optimal whitening and decorrelation. The American Statistician, 72(4):309–314, 2018.\n[37] St´ephane G Mallat and Zhifeng Zhang. Matching pursuits with time-frequency dictionaries. IEEE Transactions on signal processing, 41(12):3397– 3415, 1993.\n[38] Jeff Johnson, Matthijs Douze, and Herve´ J´egou. Billion-scale similarity search with GPUs. IEEE Transactions on Big Data, 7(3):535–547, 2019.\n[39] Aapo Hyvarinen. Fast ica for noisy data using gaussian moments. In 1999 IEEE international symposium on circuits and systems (ISCAS), volume 5, pages 57–61. IEEE, 1999.\n[40] James J Jun, Nicholas A Steinmetz, Joshua H Siegle, Daniel J Denman, Marius Bauza, Brian Barbarits, Albert K Lee, Costas A Anastassiou, Alexandru Andrei, ¸Cag˘atay Aydın, et al. Fully integrated silicon probes for high-density recording of neural activity. Nature, 551(7679):232–236, 2017.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who ha ranted bioRxiv a l icense to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "2139 [41] Jonathan W Pillow, Jonathon Shlens,\n2140 EJ Chichilnisky, and Eero P Simoncelli. A\n2141 model-based spike sorting algorithm for re\n2142 moving correlation artifacts in multi-neuron\n2143 recordings. PloS one, 8(5):e62123, 2013.\n2144 [42] Darrell A Henze, Zsolt Borhegyi, Jozsef Csicsvari,\n2145 Akira Mamiya, Kenneth D Harris, and Gyorgy\n2146 Buzsaki. Intracellular features predicted by\n2147 extracellular recordings in the hippocampus in\n2148 vivo. Journal of neurophysiology, 84(1):390–400,\n2149 2000.\n2150 [43] Kenneth D Harris, Darrell A Henze, Jozsef\n2151 Csicsvari, Hajime Hirase, and Gyorgy Buzsaki.\n2152 Accuracy of tetrode spike separation as deter\n2153 mined by simultaneous intracellular and extracel\n2154 lular measurements. Journal of neurophysiology,\n2155 84(1):401–414, 2000.\n2156 [44] DA Henze, KD Harris, Z Borhegyi, J Csicsvari,\n2157 A Mamiya, H Hirase, A Sirota, and G Buzs´aki. Si\n2158 multaneous intracellular and extracellular record\n2159 ings from hippocampus region ca1 of anes\n2160 thetized rats. CRCNS. org, 2009.\n2161 [45] Joana P Neto, Gon¸calo Lopes, Joa˜o Fraza˜o,\n2162 Joana Nogueira, Pedro Lacerda, Pedro Baia˜o,\n2163 Arno Aarts, Alexandru Andrei, Silke Musa, Elvira\n2164 Fortunato, et al. Validating silicon polytrodes\n2165 with paired juxtacellular recordings: method and\n2166 dataset. Journal of neurophysiology, 116(2):892–\n2167 903, 2016.\n2168 [46] Andre´ Marques-Smith, Joana P. Neto, Gonc¸alo\n2169 Lopes, Joana Nogueira, Lorenza Calcaterra,\n2170 Jo˜ao Fraz˜ao, Danbee Kim, Matthew G. Phillips,\n2171 George Dimitriadis, and Adam R. Kampff.\n2172 Recording from the same neuron with high\n2173 density cmos probes and patch-clamp: a ground\n2174 truth dataset and an experiment in collaboration.\n2175 bioRxiv, 2020.\n2176 [47] A Marques-Smith, JP Neto, G Lopes, J Nogueira,\n2177 L Calcaterra, J Fraza˜o, D Kim, MG Phillips,\n2178 G Dimitriadis, and A Kampff. Simultaneous\n2179 patch-clamp and dense cmos probe extracellu\n2180 lar recordings from the same cortical neuron in\n2181 anaesthetized rats. CRCNS. org, 10:K0J67F4T,\n2182 2018.\n2183 [48] Giulia LB Spampinato, Elric Esposito, Pierre\n2184 Yger, Jens Duebel, Serge Picaud, and Olivier\n2185 Marre. Ground truth recordings for validation of\n2186 spike sorting algorithms. March 2018.\n2187 [49] Jeremy Magland, James J Jun, Elizabeth\n2188 Lovero, Alexander J Morley, Cole Lincoln Hur\n2189 witz, Alessio Paolo Buccino, Samuel Garcia, and\n2190 Alex H Barnett. Spikeforest, reproducible web",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "facing ground-truth validation of automated neural spike sorters. Elife, 9:e55167, 2020.\n[50] M Pachitariu, NA Steinmetz, and J Colonell. Kilosort2. github, 2019. [51] Espen Hagen, Torbjørn V Ness, Amir Khosrowshahi, Christina Sørensen, Marianne Fyhn, Torkel Hafting, Felix Franke, and Gaute T Einevoll. Visapy: a python tool for biophysicsbased generation of virtual spiking activity for evaluation of spike-sorting algorithms. Journal of neuroscience methods, 245:182–204, 2015.\n[52] Sergey L Gratiy, Yazan N Billeh, Kael Dai, Catalin Mitelut, David Feng, Nathan W Gouwens, Nicholas Cain, Christof Koch, Costas A Anastassiou, and Anton Arkhipov. Bionet: A python interface to neuron for modeling large-scale networks. PLoS One, 13(8):e0201630, 2018. [53] Luis A Camun˜as-Mesa and Rodrigo Quian Quiroga. A detailed and fast model of extracellular recordings. Neural computation, 25(5):1191– 1212, 2013.\n[54] Alessio Paolo Buccino and Gaute Tomas Einevoll. Mearec: a fast and customizable testbench simulator for ground-truth extracellular spiking activity. Neuroinformatics, 19(1):185–204, 2021.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who has granted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/567eb1ef35fd33bb504cd95517a8c40bba85932fbb4bbbfbbcad63926395850a.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "S1: Kilosort4 graphical user interface. The GUI for Kilosort4 enables the user to load in and view the binary file both raw and whitened Next the user runs the spike-sorting pipeline. The message log box allows the user to monitor the progress of the spike-sorting algorithm.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/d2de2f20ccb058c42f4ff653f1092f41641b73815b74a9489ff92bafeacffb98.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "S2: Simulation features. a, Four additional example units like in Figure 3c. b, The units in a after drift correction with the interpolation method from Kilosort $2.5/3/4$ . Units 1 and 3 interpolate well, while units 2 and 4 do not, due to having features with small spatial footprints. c, Example section of the simulation in Figure 3d, but after independent noise was added and the data was un-whitened.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who h nted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/da8ce42ca0e84296670613999c5412b509974de2965c1f9b428c4c70e9965d31.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "S3: Real drift examples. These are inferred drift traces from the IBL dataset grouped into: a, no/small drift b, medium drift, c, high drift, d fast drift and e, step drift. Note that in many cases different types of drift are combined.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/8c0002c1bb49bd058611bf5001d76eb86b402be82e85bfcf7edcb3591b2a2ac0.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "S4: Recovered drift traces from simulations. a-f, Ground truth simulated drift $^+$ the drift identified by Kilosort4. (Left) Estimated and tru drift traces. (Right) Scatter plot of estimated and true drift traces.",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "bioRxiv preprint doi: https://doi.org/10.1101/2023.01.07.523036; this version posted January 7, 2023. The copyright holder for this preprint (which was not certified by peer review) is the author/funder, who has granted bioRxiv a license to display the preprint in perpetuity. It is made available under aCC-BY-NC 4.0 International license.",
+        "page_idx": 0
+    },
+    {
+        "type": "image",
+        "img_path": "images/2ceab4b000de17106569054b9ea58af9322edb1b7f9bf492bd9c9b8df972286e.jpg",
+        "text": "",
+        "page_idx": 0
+    },
+    {
+        "type": "text",
+        "text": "S5: Accuracy as a function of firing rate, amplitude/norm and spatial extkilosort论文.pdfent. a-c, Scatter plots of unit properties (firing rate, norm, spatial extent respectively) versus accuracy, for the no drift simulation. Lines show the average accuracy in bins of wqual numbers of points. d-f, Average accuracy curves for all types of simulations and all unit properties (firing rate, norm, spatial extent respectively).",
+        "page_idx": 0
+    }
+]
