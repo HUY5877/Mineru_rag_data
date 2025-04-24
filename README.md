@@ -1,4 +1,4 @@
-# 此项目是专门针对于rag流程中的数据预处理截阶段，可以处理pdf，markdown等数据
+# 此项目是专门针对于rag流程中的数据预处理截阶段，可以处理pdf，markdow格式里面的大多数数据类型，比如image，latex，table，text等等
 
 [注：如果需要使用gpu进行推理加速，可以访问mineru官方项目进行环境配置](https://github.com/opendatalab/MinerU)
 环境配置流程：
